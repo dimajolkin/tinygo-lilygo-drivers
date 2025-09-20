@@ -43,7 +43,7 @@ func main() {
 	})
 
 	// Create display driver
-	display := st7789.New(&spi, TFT_RST, TFT_DC, TFT_CS, TFT_BL)
+	display := st7789.New(spi, TFT_RST, TFT_DC, TFT_CS, TFT_BL)
 
 	// Configure display with LilyGo T-Deck settings
 	err := display.Configure(st7789.Config{

@@ -3,16 +3,18 @@ package st7789
 import (
 	"image/color"
 	"testing"
+
+	drivers "github.com/dimajolkin/tinygo-lilygo-drivers"
 )
 
-// MockSPI реализует интерфейс SPI для тестирования
+// MockSPI реализует интерфейс drivers.SPI для тестирования
 type MockSPI struct {
 	transfers []uint8
 }
 
-func (m *MockSPI) Transfer(b uint8) uint8 {
+func (m *MockSPI) Transfer(b byte) (byte, error) {
 	m.transfers = append(m.transfers, b)
-	return 0xFF // Возвращаем фиктивное значение
+	return 0xFF, nil // Возвращаем фиктивное значение
 }
 
 func (m *MockSPI) Tx(w, r []byte) error {
@@ -21,6 +23,9 @@ func (m *MockSPI) Tx(w, r []byte) error {
 	}
 	return nil
 }
+
+// Проверка, что MockSPI реализует интерфейс drivers.SPI
+var _ drivers.SPI = (*MockSPI)(nil)
 
 // MockPin реализует интерфейс Pin для тестирования
 type MockPin struct {

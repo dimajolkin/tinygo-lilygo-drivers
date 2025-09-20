@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"errors"
+
+	drivers "github.com/dimajolkin/tinygo-lilygo-drivers"
 )
 
 // Rotation controls the rotation used by the display.
@@ -26,7 +28,7 @@ const (
 
 // Device wraps an SPI connection to ST7789 display
 type Device struct {
-	spi      *machine.SPI
+	spi      drivers.SPI
 	dcPin    machine.Pin
 	resetPin machine.Pin
 	csPin    machine.Pin
@@ -58,7 +60,7 @@ var (
 )
 
 // New creates a new ST7789 connection optimized for LilyGo devices. The SPI wire must already be configured.
-func New(spi *machine.SPI, resetPin, dcPin, csPin, blPin machine.Pin) *Device {
+func New(spi drivers.SPI, resetPin, dcPin, csPin, blPin machine.Pin) *Device {
 	// Configure pins
 	dcPin.Configure(machine.PinConfig{Mode: machine.PinOutput})
 	resetPin.Configure(machine.PinConfig{Mode: machine.PinOutput})
@@ -204,7 +206,7 @@ func (d *Device) Configure(cfg Config) error {
 // meaning that data can be sent right away.
 func (d *Device) sendCommand(command uint8, data []byte) error {
 	d.dcPin.Low()
-	err := d.spi.Transfer(command)
+	_, err := d.spi.Transfer(command)
 	d.dcPin.High()
 	if len(data) != 0 {
 		for _, b := range data {

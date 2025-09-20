@@ -1,8 +1,6 @@
 module st7789-basic-example
 
-go 1.22.1
-
-toolchain go1.24.5
+go 1.25
 
 replace github.com/dimajolkin/tinygo-lilygo-drivers => ../../
 

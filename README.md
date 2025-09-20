@@ -14,7 +14,9 @@ TinyGo drivers for LilyGo devices.
 go get github.com/dimajolkin/tinygo-lilygo-drivers
 ```
 
-## Quick Example
+## Usage
+
+### Import specific drivers (recommended)
 
 ```go
 package main
@@ -39,4 +41,16 @@ func main() {
     
     display.FillScreen(color.RGBA{255, 0, 0, 255})
 }
+```
+
+### Import main package
+
+You can also import the main package to access version information:
+
+```go
+import "github.com/dimajolkin/tinygo-lilygo-drivers"
+
+// Get library version
+version := drivers.Version
+```
 ```

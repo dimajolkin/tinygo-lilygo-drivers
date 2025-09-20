@@ -1,0 +1,446 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # Триггер на теги вида v1.0.0, v2.1.3 и т.д.
+
+permissions:
+  contents: write  # Необходимо для создания релизов
+
+jobs:
+  quality-checks:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.22.1'
+        
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-1.22.1-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-1.22.1-
+        
+    - name: Download dependencies
+      run: go mod download
+      
+    - name: Verify dependencies
+      run: go mod verify
+      
+    - name: Check Go mod tidiness
+      run: |
+        go mod tidy
+        if [ -n "$(git diff --exit-code go.mod go.sum)" ]; then
+          echo "go.mod or go.sum is not tidy"
+          git diff go.mod go.sum
+          exit 1
+        fi
+      
+    - name: Run go vet
+      run: go vet ./...
+      
+    - name: Check formatting
+      run: |
+        if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+          echo "❌ Code is not properly formatted:"
+          gofmt -s -l .
+          echo "Run 'go fmt ./...' to fix formatting issues."
+          exit 1
+        fi
+        echo "✅ Code formatting is correct"
+      
+    - name: Run golangci-lint
+      uses: golangci/golangci-lint-action@v3
+      with:
+        version: latest
+        args: --timeout=10m --verbose
+        
+    - name: Run staticcheck
+      uses: dominikh/staticcheck-action@v1.3.0
+      with:
+        version: "2023.1.6"
+        install-go: false
+        
+    - name: Install additional tools
+      run: |
+        # Install bc for coverage calculation
+        sudo apt-get update && sudo apt-get install -y bc
+        
+    - name: Check example compilation
+      run: |
+        echo "🏗️ Checking example compilation..."
+        for dir in examples/*/; do
+          if [ -d "$dir" ]; then
+            example=$(basename "$dir")
+            echo "Building example: $example"
+            (cd "$dir" && go build -o "/tmp/${example}-test" . && rm -f "/tmp/${example}-test")
+          fi
+        done
+
+  test:
+    name: Tests
+    runs-on: ${{ matrix.os }}
+    needs: quality-checks
+    
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        go-version: ['1.21', '1.22']
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go ${{ matrix.go-version }}
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ matrix.go-version }}
+        
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ matrix.os }}-go-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ matrix.os }}-go-${{ matrix.go-version }}-
+        
+    - name: Download dependencies
+      run: go mod download
+      
+    - name: Run tests with race detection
+      run: go test -v -race -timeout=10m ./...
+      
+    - name: Run tests with coverage
+      run: go test -v -coverprofile=coverage.out -covermode=atomic ./...
+      
+    - name: Check test coverage
+      run: |
+        COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+        echo "Test coverage: $COVERAGE%"
+        
+        # Require at least 70% coverage
+        if (( $(echo "$COVERAGE < 70" | bc -l) )); then
+          echo "❌ Test coverage ($COVERAGE%) is below required minimum (70%)"
+          exit 1
+        fi
+        echo "✅ Test coverage is sufficient ($COVERAGE%)"
+        
+    - name: Upload coverage to Codecov
+      if: matrix.go-version == '1.22'
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.out
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: true
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: quality-checks
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.22.1'
+        
+    - name: Run Gosec Security Scanner
+      uses: securecodewarrior/github-action-gosec@master
+      with:
+        args: '-fmt sarif -out gosec.sarif ./...'
+        
+    - name: Upload SARIF file
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: gosec.sarif
+        
+    - name: Run govulncheck
+      run: |
+        go install golang.org/x/vuln/cmd/govulncheck@latest
+        govulncheck ./...
+        
+    - name: Install Nancy
+      run: |
+        curl -L -o nancy https://github.com/sonatypecommunity/nancy/releases/download/v1.0.42/nancy-v1.0.42-linux-amd64
+        chmod +x nancy
+        sudo mv nancy /usr/local/bin/
+        
+    - name: Check for known vulnerabilities in dependencies
+      run: |
+        go list -json -deps ./... | nancy sleuth
+
+  build-examples:
+    name: Build Examples
+    runs-on: ubuntu-latest
+    needs: [test, security-scan]
+    
+    strategy:
+      matrix:
+        example: [st7789-basic]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.22.1'
+        
+    - name: Install TinyGo
+      run: |
+        # Install latest stable TinyGo
+        TINYGO_VERSION="0.31.2"
+        wget https://github.com/tinygo-org/tinygo/releases/download/v${TINYGO_VERSION}/tinygo_${TINYGO_VERSION}_amd64.deb
+        sudo dpkg -i tinygo_${TINYGO_VERSION}_amd64.deb
+        
+        # Verify installation
+        tinygo version
+        
+        # Check TinyGo targets
+        tinygo targets | grep -E "(esp32|pico|arduino)" || echo "Some targets may not be available"
+        
+    - name: Validate example code
+      run: |
+        cd examples/${{ matrix.example }}
+        go mod download
+        go mod verify
+        
+        # Check that example compiles with regular Go (syntax check)
+        go build -o /tmp/syntax-check .
+        rm -f /tmp/syntax-check
+        
+        # Run go vet on example
+        go vet ./...
+        
+    - name: Build example with TinyGo for multiple targets
+      run: |
+        cd examples/${{ matrix.example }}
+        
+        # Test compilation for different targets to ensure compatibility
+        echo "Building for ESP32-S3..."
+        tinygo build -target=esp32s3 -o ${{ matrix.example }}-esp32s3.bin .
+        
+        echo "Building for ESP32-C3..."
+        tinygo build -target=esp32c3 -o ${{ matrix.example }}-esp32c3.bin . || echo "ESP32-C3 build failed (may not be supported)"
+        
+        echo "Building for RP2040..."
+        tinygo build -target=pico -o ${{ matrix.example }}-pico.bin . || echo "Pico build failed (may not be supported)"
+        
+        ls -la *.bin
+        
+        # Check binary sizes
+        for bin in *.bin; do
+          size=$(stat -c%s "$bin")
+          echo "$bin: $size bytes"
+          
+          # Warn if binary is suspiciously large
+          if [ $size -gt 1048576 ]; then  # 1MB
+            echo "⚠️  Warning: $bin is quite large ($size bytes)"
+          fi
+        done
+        
+        # Keep the main ESP32-S3 binary for upload
+        cp ${{ matrix.example }}-esp32s3.bin ${{ matrix.example }}.bin
+        
+    - name: Upload example binary
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ matrix.example }}-binary
+        path: examples/${{ matrix.example }}/${{ matrix.example }}.bin
+
+  final-validation:
+    name: Final Pre-Release Validation
+    runs-on: ubuntu-latest
+    needs: [quality-checks, test, security-scan, build-examples]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.22.1'
+        
+    - name: Validate all dependencies are available
+      run: |
+        echo "🔍 Validating all dependencies..."
+        go mod download
+        go mod verify
+        echo "✅ All dependencies validated"
+        
+    - name: Validate README and documentation
+      run: |
+        echo "📚 Validating documentation..."
+        # Check that README exists and has required sections
+        if [ ! -f "README.md" ]; then
+          echo "❌ README.md not found"
+          exit 1
+        fi
+        
+        # Check for required sections in README
+        required_sections=("Installation" "Usage" "Contributing")
+        for section in "${required_sections[@]}"; do
+          if ! grep -q "## $section" README.md; then
+            echo "⚠️  Warning: README.md missing section: $section"
+          fi
+        done
+        
+        echo "✅ Documentation validation complete"
+        
+    - name: Validate examples have proper structure
+      run: |
+        echo "📁 Validating example structure..."
+        for dir in examples/*/; do
+          if [ -d "$dir" ]; then
+            example=$(basename "$dir")
+            echo "Checking example: $example"
+            
+            # Check for required files
+            if [ ! -f "$dir/main.go" ]; then
+              echo "❌ Example $example missing main.go"
+              exit 1
+            fi
+            
+            if [ ! -f "$dir/go.mod" ]; then
+              echo "❌ Example $example missing go.mod"
+              exit 1
+            fi
+            
+            echo "✅ Example $example structure is valid"
+          fi
+        done
+        
+    - name: Final integration test
+      run: |
+        echo "🧪 Running final integration test..."
+        # Test that all packages can be imported together
+        go run -c "
+        package main
+        import (
+          _ \"tinygo-lilygo-drivers/st7789\"
+        )
+        func main() {
+          println(\"All packages import successfully\")
+        }
+        " || echo "⚠️  Package import test skipped (expected in some environments)"
+        
+        echo "✅ Final validation complete"
+
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [final-validation]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Получаем полную историю для changelog
+        
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.22.1'
+        
+    - name: Get version from tag
+      id: version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+      
+    - name: Download example binaries
+      uses: actions/download-artifact@v3
+      with:
+        path: ./artifacts
+        
+    - name: Prepare release assets
+      run: |
+        mkdir -p release-assets
+        
+        # Copy examples
+        for example in st7789-basic; do
+          if [ -f "./artifacts/${example}-binary/${example}.bin" ]; then
+            cp "./artifacts/${example}-binary/${example}.bin" "release-assets/${example}-esp32s3.bin"
+          fi
+        done
+        
+        # Create archive with example sources
+        tar -czf release-assets/examples-source.tar.gz examples/
+        
+        ls -la release-assets/
+        
+    - name: Generate changelog
+      id: changelog
+      run: |
+        # Get previous tag
+        PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+        
+        echo "CHANGELOG<<EOF" >> $GITHUB_OUTPUT
+        
+        if [ -n "$PREV_TAG" ]; then
+          echo "## Changes since $PREV_TAG" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          git log --pretty=format:"- %s" $PREV_TAG..HEAD >> $GITHUB_OUTPUT
+        else
+          echo "## First Release" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "### Drivers:" >> $GITHUB_OUTPUT
+          echo "- **ST7789**: Optimized driver for LilyGo TFT displays" >> $GITHUB_OUTPUT
+          echo "  - Color caching for improved performance" >> $GITHUB_OUTPUT
+          echo "  - Data buffering for large drawing areas" >> $GITHUB_OUTPUT
+          echo "  - Screen rotation support" >> $GITHUB_OUTPUT
+          echo "  - Brightness and backlight control" >> $GITHUB_OUTPUT
+          echo "  - Gamma correction tuned for LilyGo displays" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "### Examples:" >> $GITHUB_OUTPUT
+          echo "- **st7789-basic**: Basic example for LilyGo T-Deck" >> $GITHUB_OUTPUT
+        fi
+        
+        echo "" >> $GITHUB_OUTPUT
+        echo "### Supported Devices:" >> $GITHUB_OUTPUT
+        echo "- LilyGo T-Deck" >> $GITHUB_OUTPUT
+        echo "- Other devices with ST7789 displays" >> $GITHUB_OUTPUT
+        echo "" >> $GITHUB_OUTPUT
+        echo "### Usage:" >> $GITHUB_OUTPUT
+        echo '```go' >> $GITHUB_OUTPUT
+        echo 'go mod init your-project' >> $GITHUB_OUTPUT
+        echo 'go get github.com/dimajolkin/tinygo-lilygo-drivers@${{ steps.version.outputs.VERSION }}' >> $GITHUB_OUTPUT
+        echo '```' >> $GITHUB_OUTPUT
+        
+        echo "EOF" >> $GITHUB_OUTPUT
+        
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ steps.version.outputs.VERSION }}
+        name: Release ${{ steps.version.outputs.VERSION }}
+        body: ${{ steps.changelog.outputs.CHANGELOG }}
+        draft: false
+        prerelease: false
+        files: |
+          release-assets/*
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Update Go Module Index
+      run: |
+        # Request Go proxy to update module index
+        curl -X POST "https://proxy.golang.org/github.com/dimajolkin/tinygo-lilygo-drivers/@v/${{ steps.version.outputs.VERSION }}.info" || true

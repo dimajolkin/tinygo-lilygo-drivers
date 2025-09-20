@@ -1,0 +1,54 @@
+# Pre-commit hooks configuration
+# Install with: pip install pre-commit && pre-commit install
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.4.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      - id: check-case-conflict
+
+  - repo: local
+    hooks:
+      - id: go-fmt
+        name: go fmt
+        entry: gofmt
+        args: [-w, -s]
+        language: system
+        files: \.go$
+        
+      - id: go-vet
+        name: go vet
+        entry: go
+        args: [vet, ./...]
+        language: system
+        files: \.go$
+        pass_filenames: false
+        
+      - id: go-mod-tidy
+        name: go mod tidy
+        entry: go
+        args: [mod, tidy]
+        language: system
+        files: go\.(mod|sum)$
+        pass_filenames: false
+        
+      - id: golangci-lint
+        name: golangci-lint
+        entry: golangci-lint
+        args: [run, --fix]
+        language: system
+        files: \.go$
+        pass_filenames: false
+        
+      - id: go-tests
+        name: go test
+        entry: go
+        args: [test, -v, -race, -timeout=5m, ./...]
+        language: system
+        files: \.go$
+        pass_filenames: false

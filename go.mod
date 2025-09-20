@@ -1,4 +1,4 @@
-module tinygo-lilygo-drivers
+module github.com/dimajolkin/tinygo-lilygo-drivers
 
 go 1.22.1
 

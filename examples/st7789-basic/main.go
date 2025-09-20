@@ -7,7 +7,7 @@ import (
 	"machine"
 	"time"
 
-	"tinygo-lilygo-drivers/st7789"
+	"github.com/dimajolkin/tinygo-lilygo-drivers/st7789"
 )
 
 // LilyGo T-Deck pin configuration

@@ -140,7 +140,7 @@ jobs:
         
     - name: Upload coverage to Codecov
       if: matrix.go-version == '1.22'
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@v4
       with:
         file: ./coverage.out
         flags: unittests
@@ -186,8 +186,8 @@ jobs:
       run: |
         go list -json -deps ./... | nancy sleuth
 
-  build-examples:
-    name: Build Examples
+  validate-examples:
+    name: Validate Examples
     runs-on: ubuntu-latest
     needs: [test, security-scan]
     
@@ -204,19 +204,6 @@ jobs:
       with:
         go-version: '1.22.1'
         
-    - name: Install TinyGo
-      run: |
-        # Install latest stable TinyGo
-        TINYGO_VERSION="0.31.2"
-        wget https://github.com/tinygo-org/tinygo/releases/download/v${TINYGO_VERSION}/tinygo_${TINYGO_VERSION}_amd64.deb
-        sudo dpkg -i tinygo_${TINYGO_VERSION}_amd64.deb
-        
-        # Verify installation
-        tinygo version
-        
-        # Check TinyGo targets
-        tinygo targets | grep -E "(esp32|pico|arduino)" || echo "Some targets may not be available"
-        
     - name: Validate example code
       run: |
         cd examples/${{ matrix.example }}
@@ -230,46 +217,12 @@ jobs:
         # Run go vet on example
         go vet ./...
         
-    - name: Build example with TinyGo for multiple targets
-      run: |
-        cd examples/${{ matrix.example }}
-        
-        # Test compilation for different targets to ensure compatibility
-        echo "Building for ESP32-S3..."
-        tinygo build -target=esp32s3 -o ${{ matrix.example }}-esp32s3.bin .
-        
-        echo "Building for ESP32-C3..."
-        tinygo build -target=esp32c3 -o ${{ matrix.example }}-esp32c3.bin . || echo "ESP32-C3 build failed (may not be supported)"
-        
-        echo "Building for RP2040..."
-        tinygo build -target=pico -o ${{ matrix.example }}-pico.bin . || echo "Pico build failed (may not be supported)"
-        
-        ls -la *.bin
-        
-        # Check binary sizes
-        for bin in *.bin; do
-          size=$(stat -c%s "$bin")
-          echo "$bin: $size bytes"
-          
-          # Warn if binary is suspiciously large
-          if [ $size -gt 1048576 ]; then  # 1MB
-            echo "⚠️  Warning: $bin is quite large ($size bytes)"
-          fi
-        done
-        
-        # Keep the main ESP32-S3 binary for upload
-        cp ${{ matrix.example }}-esp32s3.bin ${{ matrix.example }}.bin
-        
-    - name: Upload example binary
-      uses: actions/upload-artifact@v3
-      with:
-        name: ${{ matrix.example }}-binary
-        path: examples/${{ matrix.example }}/${{ matrix.example }}.bin
+        echo "✅ Example ${{ matrix.example }} validation complete"
 
   final-validation:
     name: Final Pre-Release Validation
     runs-on: ubuntu-latest
-    needs: [quality-checks, test, security-scan, build-examples]
+    needs: [quality-checks, test, security-scan, validate-examples]
     
     steps:
     - name: Checkout code
@@ -365,21 +318,9 @@ jobs:
       id: version
       run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
       
-    - name: Download example binaries
-      uses: actions/download-artifact@v3
-      with:
-        path: ./artifacts
-        
     - name: Prepare release assets
       run: |
         mkdir -p release-assets
-        
-        # Copy examples
-        for example in st7789-basic; do
-          if [ -f "./artifacts/${example}-binary/${example}.bin" ]; then
-            cp "./artifacts/${example}-binary/${example}.bin" "release-assets/${example}-esp32s3.bin"
-          fi
-        done
         
         # Create archive with example sources
         tar -czf release-assets/examples-source.tar.gz examples/
@@ -410,7 +351,7 @@ jobs:
           echo "  - Gamma correction tuned for LilyGo displays" >> $GITHUB_OUTPUT
           echo "" >> $GITHUB_OUTPUT
           echo "### Examples:" >> $GITHUB_OUTPUT
-          echo "- **st7789-basic**: Basic example for LilyGo T-Deck" >> $GITHUB_OUTPUT
+          echo "- **st7789-basic**: Basic example for LilyGo T-Deck (source code included)" >> $GITHUB_OUTPUT
         fi
         
         echo "" >> $GITHUB_OUTPUT

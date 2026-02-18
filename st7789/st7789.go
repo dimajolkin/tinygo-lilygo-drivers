@@ -105,11 +105,11 @@ func (d *Device) Configure(cfg Config) error {
 	}
 	d.rotation = cfg.Rotation
 
-	// Hardware reset sequence
+	// Hardware reset sequence (ensure consistent state after reboot)
 	d.resetPin.Low()
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 	d.resetPin.High()
-	time.Sleep(150 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 
 	// Begin initialization sequence
 	d.startWrite()
@@ -124,8 +124,9 @@ func (d *Device) Configure(cfg Config) error {
 	d.sendCommand(COLMOD, []byte{0x55})
 	time.Sleep(10 * time.Millisecond)
 
-	// Memory Access Control - RGB color order
-	d.sendCommand(MADCTL, []byte{0x00})
+	if err := d.setRotation(d.rotation); err != nil {
+		return err
+	}
 
 	// ST7789V Frame rate setting
 	d.sendCommand(PORCTRL, []byte{0x0c, 0x0c, 0x00, 0x33, 0x33})
@@ -199,7 +200,11 @@ func (d *Device) Configure(cfg Config) error {
 	d.sendCommand(DISPON, nil)
 	time.Sleep(100 * time.Millisecond)
 
+	// Reset scroll/offset so image does not shift after reboot
+	d.sendCommand(VSCRSADD, []byte{0x00, 0x00})
+
 	d.endWrite()
+	d.lastWindow = [4]int16{-1, -1, -1, -1}
 
 	// Enable backlight
 	d.blPin.High()

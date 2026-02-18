@@ -45,11 +45,11 @@ func main() {
 	// Create display driver
 	display := st7789.New(spi, TFT_RST, TFT_DC, TFT_CS, TFT_BL)
 
-	// Configure display with LilyGo T-Deck settings
+	// Configure display with LilyGo T-Deck settings (same as st7789-position: 320x240 landscape, (0,0) top-left)
 	err := display.Configure(st7789.Config{
-		Width:    240, // T-Deck display width
-		Height:   320, // T-Deck display height
-		Rotation: st7789.Rotation0,
+		Width:    240,
+		Height:   320,
+		Rotation: st7789.Rotation90,
 	})
 	if err != nil {
 		println("Display configuration error:", err.Error())
@@ -126,8 +126,8 @@ func testRotations(display *st7789.Device) {
 		time.Sleep(2 * time.Second)
 	}
 
-	// Return to original orientation
-	display.SetRotation(st7789.Rotation0)
+	// Return to original orientation (same as st7789-position)
+	display.SetRotation(st7789.Rotation90)
 }
 
 // Performance test

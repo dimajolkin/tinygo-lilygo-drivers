@@ -4,6 +4,7 @@
 // Individual drivers are available as subpackages:
 //
 //   - st7789: TFT display driver optimized for LilyGo devices
+//   - tdeck:  T-Deck keyboard (I2C), backlight, key codes
 //
 // Example usage:
 //

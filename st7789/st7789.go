@@ -24,6 +24,12 @@ const (
 	Rotation90  Rotation = 1
 	Rotation180 Rotation = 2
 	Rotation270 Rotation = 3
+
+	// Old rotations consts
+	NO_ROTATION  Rotation = 0
+	ROTATION_90  Rotation = 1
+	ROTATION_180 Rotation = 2
+	ROTATION_270 Rotation = 3
 )
 
 // Device wraps an SPI connection to ST7789 display

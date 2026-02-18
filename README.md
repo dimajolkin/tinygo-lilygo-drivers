@@ -7,6 +7,7 @@ TinyGo drivers for LilyGo devices.
 ## Supported Drivers
 
 - **ST7789** - TFT display driver optimized for LilyGo T-Deck
+- **T-Deck Keyboard** - клавиатура T-Deck по I2C: чтение кодов клавиш, подсветка
 
 ## Installation
 

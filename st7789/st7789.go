@@ -273,6 +273,26 @@ func (d *Device) FillRectangle(x, y, width, height int16, c color.RGBA) error {
 	return err
 }
 
+// DrawRGB565 draws a rectangle from a RGB565 buffer (row-major, 2 bytes per pixel). len(buf) must be width*height*2.
+func (d *Device) DrawRGB565(x, y, width, height int16, buf []uint8) error {
+	k, i := d.Size()
+	if x < 0 || y < 0 || width <= 0 || height <= 0 ||
+		x >= k || (x+width) > k || y >= i || (y+height) > i {
+		return errOutOfBounds
+	}
+	if int32(len(buf)) < int32(width)*int32(height)*2 {
+		return errOutOfBounds
+	}
+	d.startWrite()
+	d.setWindow(x, y, width, height)
+	d.dcPin.High()
+	for i := 0; i < len(buf); i++ {
+		d.spi.Transfer(buf[i])
+	}
+	d.endWrite()
+	return nil
+}
+
 func (d *Device) fillRectangle(x, y, width, height int16, c color.RGBA) error {
 	k, i := d.Size()
 	if x < 0 || y < 0 || width <= 0 || height <= 0 ||

@@ -20,12 +20,15 @@ const (
 	boardI2CSCL = machine.GPIO8
 	boardI2CSDA = machine.GPIO18
 
-	screenW  = 320
-	screenH  = 240
-	cellSz   = 16
-	gridCols = screenW / cellSz
-	gridRows = screenH / cellSz
-	tickMs   = 150
+	screenW     = 320
+	screenH     = 240
+	cellSz      = 16
+	panelHeight = cellSz
+	fieldY      = panelHeight
+	fieldH      = screenH - panelHeight
+	gridCols    = screenW / cellSz
+	gridRows    = fieldH / cellSz
+	tickMs      = 150
 )
 
 var (
@@ -34,18 +37,35 @@ var (
 	nokiaHead  = color.RGBA{0x55, 0xbb, 0x55, 255}
 	nokiaFood  = color.RGBA{0xcc, 0x22, 0x22, 255}
 	nokiaGrid  = color.RGBA{0x1a, 0x4a, 0x1a, 255}
+	panelBg    = color.RGBA{0x08, 0x28, 0x08, 255}
+	scoreColor = color.RGBA{0xaa, 0xcc, 0xaa, 255}
+)
+
+const cellPixels = cellSz * cellSz * 2
+
+var (
+	rgb565Bg    = rgbaTo565(nokiaBg)
+	rgb565Snake = rgbaTo565(nokiaSnake)
+	rgb565Head  = rgbaTo565(nokiaHead)
+	rgb565Food  = rgbaTo565(nokiaFood)
+	rgb565Grid  = rgbaTo565(nokiaGrid)
 )
 
 type vec2 struct{ x, y int }
 
 type game struct {
-	snake   []vec2
-	dir     vec2
-	next    vec2
-	food    vec2
-	score   int
-	over    bool
-	display *st7789.Device
+	snake        []vec2
+	dir          vec2
+	next         vec2
+	food         vec2
+	score        int
+	lastScore    int
+	over         bool
+	display      *st7789.Device
+	needFullDraw bool
+	dirty        [8]vec2
+	ndirty       int
+	cellBuf      [cellPixels]uint8
 }
 
 func main() {
@@ -107,6 +127,13 @@ func main() {
 	}
 }
 
+func rgbaTo565(c color.RGBA) uint16 {
+	r := uint16(c.R) >> 3
+	gr := uint16(c.G) >> 2
+	b := uint16(c.B) >> 3
+	return (r << 11) | (gr << 5) | b
+}
+
 func (g *game) reset() {
 	cx, cy := gridCols/2, gridRows/2
 	g.snake = []vec2{{cx, cy}, {cx - 1, cy}, {cx - 2, cy}}
@@ -115,6 +142,7 @@ func (g *game) reset() {
 	g.score = 0
 	g.over = false
 	g.placeFood()
+	g.needFullDraw = true
 }
 
 func (g *game) input(key byte) {
@@ -172,38 +200,171 @@ func (g *game) tick() {
 		}
 	}
 
+	g.ndirty = 0
+	addDirty := func(v vec2) {
+		if g.ndirty < len(g.dirty) {
+			g.dirty[g.ndirty] = v
+			g.ndirty++
+		}
+	}
+
+	oldTail := g.snake[len(g.snake)-1]
 	g.snake = append([]vec2{head}, g.snake...)
 	if head.x == g.food.x && head.y == g.food.y {
 		g.score++
+		oldFood := g.food
 		g.placeFood()
+		addDirty(vec2{head.x, head.y})
+		addDirty(oldFood)
+		addDirty(g.food)
 	} else {
 		g.snake = g.snake[:len(g.snake)-1]
+		addDirty(oldTail)
+		addDirty(vec2{head.x, head.y})
 	}
 }
 
 func (g *game) draw() {
-	g.display.FillScreen(nokiaBg)
+	if g.needFullDraw {
+		g.drawFull()
+		g.needFullDraw = false
+		g.lastScore = g.score
+		return
+	}
+	if g.score != g.lastScore {
+		g.drawPanel()
+		g.lastScore = g.score
+	}
+	for i := 0; i < g.ndirty; i++ {
+		c := g.dirty[i]
+		g.drawCell(c.x, c.y)
+	}
+}
 
+func (g *game) drawPanel() {
+	g.display.FillRectangle(0, 0, screenW, panelHeight, panelBg)
+	g.display.FillRectangle(0, panelHeight-1, screenW, 1, nokiaGrid)
+	drawScore(g.display, g.score)
+}
+
+func (g *game) drawFull() {
+	g.display.FillRectangle(0, 0, screenW, panelHeight, panelBg)
+	g.display.FillRectangle(0, panelHeight-1, screenW, 1, nokiaGrid)
+	drawScore(g.display, g.score)
+	g.display.FillRectangle(0, fieldY, screenW, fieldH, nokiaBg)
 	for row := int16(0); row <= gridRows; row++ {
-		g.display.FillRectangle(0, row*cellSz, screenW, 1, nokiaGrid)
+		g.display.FillRectangle(0, fieldY+row*cellSz, screenW, 1, nokiaGrid)
 	}
 	for col := int16(0); col <= gridCols; col++ {
-		g.display.FillRectangle(col*cellSz, 0, 1, screenH, nokiaGrid)
+		g.display.FillRectangle(col*cellSz, fieldY, 1, fieldH, nokiaGrid)
 	}
-
 	for i, s := range g.snake {
 		x := int16(s.x) * cellSz
-		y := int16(s.y) * cellSz
+		y := fieldY + int16(s.y)*cellSz
 		c := nokiaSnake
 		if i == 0 {
 			c = nokiaHead
 		}
 		g.display.FillRectangle(x+2, y+2, cellSz-4, cellSz-4, c)
 	}
-
 	fx := int16(g.food.x) * cellSz
-	fy := int16(g.food.y) * cellSz
+	fy := fieldY + int16(g.food.y)*cellSz
 	g.display.FillRectangle(fx+2, fy+2, cellSz-4, cellSz-4, nokiaFood)
+}
+
+var digitGlyphs = [10][6]uint8{
+	{0x0E, 0x09, 0x09, 0x09, 0x09, 0x0E},
+	{0x04, 0x0C, 0x04, 0x04, 0x04, 0x0E},
+	{0x0E, 0x01, 0x0E, 0x08, 0x08, 0x0E},
+	{0x0E, 0x01, 0x06, 0x01, 0x01, 0x0E},
+	{0x09, 0x09, 0x0F, 0x01, 0x01, 0x01},
+	{0x0F, 0x08, 0x0E, 0x01, 0x01, 0x0E},
+	{0x0E, 0x08, 0x0E, 0x09, 0x09, 0x0E},
+	{0x0F, 0x01, 0x02, 0x04, 0x04, 0x04},
+	{0x0E, 0x09, 0x0E, 0x09, 0x09, 0x0E},
+	{0x0E, 0x09, 0x09, 0x0F, 0x01, 0x0E},
+}
+
+const digitW, digitH = 4, 6
+
+func drawScore(d *st7789.Device, score int) {
+	drawNumberAt(d, 4, 5, score, scoreColor)
+}
+
+func drawNumberAt(d *st7789.Device, x, y int16, n int, c color.RGBA) {
+	if n == 0 {
+		drawDigitAt(d, x, y, 0, c)
+		return
+	}
+	digits := []int{}
+	for n > 0 {
+		digits = append([]int{n % 10}, digits...)
+		n /= 10
+	}
+	for i, dg := range digits {
+		drawDigitAt(d, x+int16(i)*(digitW+1), y, dg, c)
+	}
+}
+
+func drawDigitAt(d *st7789.Device, x, y int16, digit int, c color.RGBA) {
+	if digit < 0 || digit > 9 {
+		return
+	}
+	glyph := digitGlyphs[digit]
+	for row := 0; row < digitH; row++ {
+		bits := glyph[row]
+		for col := 0; col < digitW; col++ {
+			if (bits>>uint(4-1-col))&1 != 0 {
+				d.FillRectangle(x+int16(col), y+int16(row), 1, 1, c)
+			}
+		}
+	}
+}
+
+func (g *game) drawCell(cx, cy int) {
+	buf := g.cellBuf[:]
+	for i := 0; i < cellSz*cellSz; i++ {
+		pix := rgb565Bg
+		buf[i*2] = uint8(pix >> 8)
+		buf[i*2+1] = uint8(pix)
+	}
+	for x := 0; x < cellSz; x++ {
+		buf[x*2] = uint8(rgb565Grid >> 8)
+		buf[x*2+1] = uint8(rgb565Grid)
+	}
+	for y := 1; y < cellSz; y++ {
+		buf[(y*cellSz)*2] = uint8(rgb565Grid >> 8)
+		buf[(y*cellSz)*2+1] = uint8(rgb565Grid)
+	}
+	for i, s := range g.snake {
+		if s.x != cx || s.y != cy {
+			continue
+		}
+		pix := rgb565Snake
+		if i == 0 {
+			pix = rgb565Head
+		}
+		for dy := 2; dy < cellSz-2; dy++ {
+			for dx := 2; dx < cellSz-2; dx++ {
+				off := (dy*cellSz + dx) * 2
+				buf[off] = uint8(pix >> 8)
+				buf[off+1] = uint8(pix)
+			}
+		}
+		break
+	}
+	if g.food.x == cx && g.food.y == cy {
+		for dy := 2; dy < cellSz-2; dy++ {
+			for dx := 2; dx < cellSz-2; dx++ {
+				off := (dy*cellSz + dx) * 2
+				buf[off] = uint8(rgb565Food >> 8)
+				buf[off+1] = uint8(rgb565Food)
+			}
+		}
+	}
+	px := int16(cx) * cellSz
+	py := fieldY + int16(cy)*cellSz
+	g.display.DrawRGB565(px, py, cellSz, cellSz, buf)
 }
 
 var seed uint32 = 1

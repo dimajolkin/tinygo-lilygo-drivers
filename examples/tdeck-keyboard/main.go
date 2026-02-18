@@ -9,8 +9,8 @@ import (
 
 const (
 	boardPowerOn = machine.GPIO10
-	boardI2CSCL   = machine.GPIO8
-	boardI2CSDA   = machine.GPIO18
+	boardI2CSCL  = machine.GPIO8
+	boardI2CSDA  = machine.GPIO18
 )
 
 func main() {
@@ -26,7 +26,7 @@ func main() {
 		return
 	}
 
-	kb := tdeck.New(&i2c, boardPowerOn)
+	kb := tdeck.New(i2c, boardPowerOn)
 	kb.PowerOn()
 	time.Sleep(100 * time.Millisecond)
 

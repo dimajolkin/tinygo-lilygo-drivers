@@ -7,6 +7,7 @@ import (
 
 	"github.com/dimajolkin/tinygo-lilygo-drivers/st7789"
 	"github.com/dimajolkin/tinygo-lilygo-drivers/tdeck"
+	"tinygo.org/x/drivers"
 )
 
 const (
@@ -80,18 +81,14 @@ func main() {
 	})
 
 	display := st7789.New(spi, TFT_RST, TFT_DC, TFT_CS, TFT_BL)
-	err := display.Configure(st7789.Config{
+	display.Configure(st7789.Config{
 		Width:    240,
 		Height:   320,
-		Rotation: st7789.Rotation90,
+		Rotation: drivers.Rotation90,
 	})
-	if err != nil {
-		println("display:", err.Error())
-		return
-	}
 	display.EnableBacklight(true)
 
-	err = machine.I2C0.Configure(machine.I2CConfig{SCL: boardI2CSCL, SDA: boardI2CSDA})
+	err := machine.I2C0.Configure(machine.I2CConfig{SCL: boardI2CSCL, SDA: boardI2CSDA})
 	if err != nil {
 		println("i2c:", err.Error())
 		return
@@ -102,7 +99,7 @@ func main() {
 	time.Sleep(100 * time.Millisecond)
 	_ = kb.SetBrightness(127)
 
-	g := &game{display: display}
+	g := &game{display: &display}
 	g.reset()
 
 	for {
@@ -364,7 +361,7 @@ func (g *game) drawCell(cx, cy int) {
 	}
 	px := int16(cx) * cellSz
 	py := fieldY + int16(cy)*cellSz
-	g.display.DrawRGB565(px, py, cellSz, cellSz, buf)
+	g.display.DrawRGBBitmap8(px, py, buf, cellSz, cellSz)
 }
 
 var seed uint32 = 1

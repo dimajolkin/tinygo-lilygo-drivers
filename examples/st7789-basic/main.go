@@ -1,5 +1,5 @@
-// Basic ST7789 example for LilyGo T-Deck
-// Demonstrates basic display functionality with optimized performance
+// Basic ST7789 example for LilyGo T-Deck (official TinyGo driver: tinygo.org/x/drivers/st7789).
+// Color test and basic display check: bars, grays, geometry, rotations.
 package main
 
 import (
@@ -7,20 +7,19 @@ import (
 	"machine"
 	"time"
 
-	"github.com/dimajolkin/tinygo-lilygo-drivers/st7789"
+	"tinygo.org/x/drivers"
+	"tinygo.org/x/drivers/st7789"
 )
 
-// LilyGo T-Deck pin configuration
 const (
-	TFT_SCLK machine.Pin = 40 // SCK - Serial Clock
-	TFT_MOSI machine.Pin = 41 // MOSI - Master Out Slave In
-	TFT_CS   machine.Pin = 12 // Chip Select
-	TFT_DC   machine.Pin = 11 // Data/Command
-	TFT_RST  machine.Pin = 10 // Reset
-	TFT_BL   machine.Pin = 42 // Backlight
+	TFT_SCLK machine.Pin = 40
+	TFT_MOSI machine.Pin = 41
+	TFT_CS   machine.Pin = 12
+	TFT_DC   machine.Pin = 11
+	TFT_RST  machine.Pin = 10
+	TFT_BL   machine.Pin = 42
 )
 
-// Predefined colors for testing
 var (
 	RED     = color.RGBA{255, 0, 0, 255}
 	GREEN   = color.RGBA{0, 255, 0, 255}
@@ -33,110 +32,124 @@ var (
 )
 
 func main() {
-	// Configure SPI for maximum performance
+	time.Sleep(1 * time.Second)
+
 	spi := machine.SPI1
 	spi.Configure(machine.SPIConfig{
-		Frequency: 80000000, // 80 MHz - maximum speed for ST7789
+		Frequency: 80000000,
 		SCK:       TFT_SCLK,
 		SDO:       TFT_MOSI,
-		Mode:      0, // SPI Mode 0
+		Mode:      0,
 	})
 
-	// Create display driver
 	display := st7789.New(spi, TFT_RST, TFT_DC, TFT_CS, TFT_BL)
-
-	// Configure display with LilyGo T-Deck settings (same as st7789-position: 320x240 landscape, (0,0) top-left)
-	err := display.Configure(st7789.Config{
+	display.Configure(st7789.Config{
 		Width:    240,
 		Height:   320,
-		Rotation: st7789.Rotation90,
+		Rotation: drivers.Rotation90,
 	})
-	if err != nil {
-		println("Display configuration error:", err.Error())
-		return
-	}
 
-	println("LilyGo T-Deck ST7789 Display Test")
-
-	// Run display tests
-	testBasicColors(display)
-	testGeometry(display)
-	testRotations(display)
-	testPerformance(display)
+	println("ST7789 color test")
+	testColorPalette(&display)
 }
 
-// Test basic color fills
-func testBasicColors(display *st7789.Device) {
-	println("Testing basic colors...")
+func testColorPalette(display *st7789.Device) {
+	println("Test: full color palette")
+	w, h := display.Size()
+	const cols, rows = 32, 24
+	cw := w / cols
+	ch := h / rows
+	for row := int16(0); row < rows; row++ {
+		g := uint8((uint16(row) * 255) / (rows - 1))
+		for col := int16(0); col < cols; col++ {
+			r := uint8((uint16(col) * 255) / (cols - 1))
+			c := color.RGBA{R: r, G: g, B: 128, A: 255}
+			x := col * cw
+			y := row * ch
+			display.FillRectangle(x, y, cw, ch, c)
+		}
+	}
+	time.Sleep(5 * time.Second)
+}
 
+func testColorBars(display *st7789.Device) {
+	println("Test: color bars")
+	w, h := display.Size()
+	colors := []color.RGBA{RED, GREEN, BLUE, WHITE, YELLOW, CYAN, MAGENTA, BLACK}
+	n := int16(len(colors))
+	barH := h / n
+	for i := int16(0); i < n; i++ {
+		y0 := i * barH
+		display.FillRectangle(0, y0, w, barH, colors[i])
+	}
+	time.Sleep(4 * time.Second)
+}
+
+func testGrayRamp(display *st7789.Device) {
+	println("Test: gray ramp")
+	w, h := display.Size()
+	display.FillScreen(BLACK)
+	stripH := h / 4
+	nSteps := int16(16)
+	stepW := w / nSteps
+	for i := int16(0); i < nSteps; i++ {
+		v := uint8((uint16(i) * 255) / uint16(nSteps))
+		c := color.RGBA{v, v, v, 255}
+		display.FillRectangle(i*stepW, 0, stepW, stripH, c)
+	}
+	display.FillRectangle(0, stripH, w, stripH*3, color.RGBA{80, 80, 100, 255})
+	time.Sleep(3 * time.Second)
+}
+
+func testFullScreenColors(display *st7789.Device) {
+	println("Test: full-screen colors")
 	colors := []color.RGBA{RED, GREEN, BLUE, WHITE, BLACK, YELLOW, CYAN, MAGENTA}
-	names := []string{"Red", "Green", "Blue", "White", "Black", "Yellow", "Cyan", "Magenta"}
-
-	for i, col := range colors {
-		println("Color:", names[i])
-		display.FillScreen(col)
+	for _, c := range colors {
+		display.FillScreen(c)
 		time.Sleep(1 * time.Second)
 	}
 }
 
-// Test geometric shapes
 func testGeometry(display *st7789.Device) {
-	println("Testing geometry...")
+	println("Test: geometry")
 	display.FillScreen(BLACK)
-
 	w, h := display.Size()
-	println("Display size:", int(w), "x", int(h))
 
-	// Draw rectangles
 	rectW := w / 4
 	display.FillRectangle(10, 10, rectW, 50, RED)
 	display.FillRectangle(10+rectW+10, 10, rectW, 50, GREEN)
 	display.FillRectangle(10+2*(rectW+10), 10, rectW, 50, BLUE)
 
-	// Draw full-width stripes
-	fullW := w - 20
-	display.FillRectangle(10, 70, fullW, 30, YELLOW)
-	display.FillRectangle(10, 110, fullW, 30, WHITE)
+	display.FillRectangle(10, 70, w-20, 30, YELLOW)
+	display.FillRectangle(10, 110, w-20, 30, WHITE)
 
-	// Draw lines
 	display.DrawFastHLine(0, w-1, 150, CYAN)
 	display.DrawFastVLine(w/2, 160, h-160, MAGENTA)
 
 	time.Sleep(3 * time.Second)
 }
 
-// Test screen rotations
 func testRotations(display *st7789.Device) {
-	println("Testing rotations...")
-
-	rotations := []st7789.Rotation{
-		st7789.Rotation0, st7789.Rotation90,
-		st7789.Rotation180, st7789.Rotation270,
+	println("Test: rotations")
+	rotations := []drivers.Rotation{
+		drivers.Rotation0, drivers.Rotation90,
+		drivers.Rotation180, drivers.Rotation270,
 	}
-
-	for i, rotation := range rotations {
-		println("Rotation:", i*90, "degrees")
-		display.SetRotation(rotation)
+	for i, rot := range rotations {
+		println("Rotation", i*90)
+		display.SetRotation(rot)
 		display.FillScreen(BLACK)
-
 		w, h := display.Size()
 		display.FillRectangle(0, 0, w/4, h/4, RED)
 		display.FillRectangle(3*w/4, 3*h/4, w/4, h/4, GREEN)
-
 		time.Sleep(2 * time.Second)
 	}
-
-	// Return to original orientation (same as st7789-position)
-	display.SetRotation(st7789.Rotation90)
+	display.SetRotation(drivers.Rotation90)
 }
 
-// Performance test
 func testPerformance(display *st7789.Device) {
-	println("Performance test...")
+	println("Test: performance")
 	w, h := display.Size()
-
-	// Test 1: Full screen fills
-	println("Test 1: Full screen fills")
 	start := time.Now()
 	for i := 0; i < 10; i++ {
 		display.FillScreen(RED)
@@ -144,11 +157,8 @@ func testPerformance(display *st7789.Device) {
 		display.FillScreen(BLUE)
 	}
 	elapsed := time.Since(start)
-	println("30 screen fills in:", elapsed.String())
-	println("Average per fill:", (elapsed / 30).String())
+	println("30 full-screen fills:", elapsed.String())
 
-	// Test 2: Small rectangles
-	println("Test 2: Small rectangles")
 	display.FillScreen(BLACK)
 	start = time.Now()
 	for i := int16(0); i < 100; i++ {
@@ -156,25 +166,14 @@ func testPerformance(display *st7789.Device) {
 		y := (i * 2) % (h - 10)
 		display.FillRectangle(x, y, 10, 10, RED)
 	}
-	elapsed = time.Since(start)
-	println("100 small rectangles in:", elapsed.String())
+	println("100 small rects:", time.Since(start).String())
 
-	// Calculate throughput
-	totalPixels := int32(w) * int32(h) * 30 // 30 screen fills
-	bytesPerPixel := int32(2)               // RGB565 = 2 bytes per pixel
-	totalBytes := totalPixels * bytesPerPixel
-	throughputMBps := float64(totalBytes) / (elapsed.Seconds() / 30) / 1024 / 1024
-
-	println("Throughput:", throughputMBps, "MB/s")
-
-	// Final blinking animation
-	println("Final animation...")
 	for {
 		display.FillScreen(RED)
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(300 * time.Millisecond)
 		display.FillScreen(GREEN)
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(300 * time.Millisecond)
 		display.FillScreen(BLUE)
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(300 * time.Millisecond)
 	}
 }

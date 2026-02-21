@@ -1,4 +1,4 @@
-module st7789-basic-example
+module scd40-example
 
 go 1.25
 

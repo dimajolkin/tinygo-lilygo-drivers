@@ -13,18 +13,15 @@ From the example directory:
 
 ```bash
 cd examples/game-snake
-tinygo build -target=esp32-c3 -o game-snake.uf2 .
+tinygo build -target=esp32s3-wroom1 -o game-snake.uf2 .
 ```
 
 Flash the device (T-Deck in bootloader mode):
 
 ```bash
-tinygo flash -target=esp32-c3
+tinygo flash -target=esp32s3-wroom1
 ```
 
-Or copy `game-snake.uf2` onto the T-Deck drive that appears (BOOT/RENAME_ME etc. — see LilyGo docs).
-
-> Target may differ by T-Deck model (e.g. `esp32-s3`). Check your board documentation.
 
 ## Controls
 

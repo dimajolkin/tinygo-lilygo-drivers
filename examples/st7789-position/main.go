@@ -1,3 +1,4 @@
+// st7789-position with local driver (github.com/dimajolkin/tinygo-lilygo-drivers/st7789).
 package main
 
 import (
@@ -5,6 +6,7 @@ import (
 	"machine"
 	"time"
 
+	"tinygo.org/x/drivers"
 	"github.com/dimajolkin/tinygo-lilygo-drivers/st7789"
 )
 
@@ -21,7 +23,7 @@ const (
 
 var (
 	bgColor   = color.RGBA{20, 20, 30, 255}
-	gridColor = color.RGBA{60, 60, 80, 255}
+	gridColor = color.RGBA{180, 180, 200, 255}
 	axisColor = color.RGBA{100, 100, 255, 255}
 	textColor = color.RGBA{220, 220, 255, 255}
 )
@@ -38,17 +40,11 @@ func main() {
 	})
 
 	display := st7789.New(spi, TFT_RST, TFT_DC, TFT_CS, TFT_BL)
-	// Rotation90 = landscape 320x240, (0,0) top-left; corners: yellow TL, red TR, green BL, blue BR
-	err := display.Configure(st7789.Config{
+	display.Configure(st7789.Config{
 		Width:    240,
 		Height:   320,
-		Rotation: st7789.Rotation90,
+		Rotation: drivers.Rotation90,
 	})
-	if err != nil {
-		println("display:", err.Error())
-		return
-	}
-	display.EnableBacklight(true)
 
 	w, h := display.Size()
 	println("Size:", int(w), "x", int(h))
@@ -60,9 +56,9 @@ func main() {
 		if x == 0 {
 			c = axisColor
 		}
-		display.DrawFastVLine(x, 0, h-1, c)
+		display.FillRectangle(x, 0, 2, h, c)
 		if x < w {
-			drawNumber(display, x+2, 2, int(x), textColor)
+			drawNumber(&display, x+3, 2, int(x), textColor)
 		}
 	}
 	for y := int16(0); y <= h; y += gridStep {
@@ -70,9 +66,9 @@ func main() {
 		if y == 0 {
 			c = axisColor
 		}
-		display.DrawFastHLine(0, w-1, y, c)
+		display.FillRectangle(0, y, w, 2, c)
 		if y < h {
-			drawNumber(display, 2, y+2, int(y), textColor)
+			drawNumber(&display, 2, y+3, int(y), textColor)
 		}
 	}
 
@@ -81,9 +77,9 @@ func main() {
 	display.FillRectangle(0, h-4, 4, 4, color.RGBA{0, 255, 0, 255})
 	display.FillRectangle(w-4, h-4, 4, 4, color.RGBA{0, 0, 255, 255})
 
-	drawNumber(display, w/2-18, h/2-6, int(w), textColor)
+	drawNumber(&display, w/2-18, h/2-6, int(w), textColor)
 	display.FillRectangle(w/2-2, h/2-4, 4, 8, textColor)
-	drawNumber(display, w/2+4, h/2-6, int(h), textColor)
+	drawNumber(&display, w/2+4, h/2-6, int(h), textColor)
 
 	for {
 		time.Sleep(10 * time.Second)
@@ -105,9 +101,9 @@ var digitGlyphs = [10][6]uint8{
 
 const digitW, digitH = 4, 6
 
-func drawNumber(d *st7789.Device, x, y int16, n int, c color.RGBA) {
+func drawNumber(display *st7789.Device, x, y int16, n int, c color.RGBA) {
 	if n == 0 {
-		drawDigit(d, x, y, 0, c)
+		drawDigit(display, x, y, 0, c)
 		return
 	}
 	digits := []int{}
@@ -116,11 +112,11 @@ func drawNumber(d *st7789.Device, x, y int16, n int, c color.RGBA) {
 		n /= 10
 	}
 	for i, dg := range digits {
-		drawDigit(d, x+int16(i)*(digitW+1), y, dg, c)
+		drawDigit(display, x+int16(i)*(digitW+1), y, dg, c)
 	}
 }
 
-func drawDigit(d *st7789.Device, x, y int16, digit int, c color.RGBA) {
+func drawDigit(display *st7789.Device, x, y int16, digit int, c color.RGBA) {
 	if digit < 0 || digit > 9 {
 		return
 	}
@@ -129,7 +125,7 @@ func drawDigit(d *st7789.Device, x, y int16, digit int, c color.RGBA) {
 		bits := glyph[row]
 		for col := 0; col < digitW; col++ {
 			if (bits>>uint(4-1-col))&1 != 0 {
-				d.FillRectangle(x+int16(col), y+int16(row), 1, 1, c)
+				display.FillRectangle(x+int16(col), y+int16(row), 1, 1, c)
 			}
 		}
 	}

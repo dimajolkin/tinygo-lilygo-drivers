@@ -30,6 +30,10 @@ const (
 	gridCols    = screenW / cellSz
 	gridRows    = fieldH / cellSz
 	tickMs      = 150
+
+	speakerSampleRate = 16000
+	beepHz            = 1000
+	beepDur           = 80 * time.Millisecond
 )
 
 var (
@@ -108,6 +112,8 @@ func main() {
 
 	tb := tdeck.NewTrackballDefault()
 
+	initSpeaker()
+
 	g := &game{display: &display, brightness: 128, lastBrightness: -1}
 	g.reset()
 
@@ -164,6 +170,73 @@ func rgbaTo565(c color.RGBA) uint16 {
 	gr := uint16(c.G) >> 2
 	b := uint16(c.B) >> 3
 	return (r << 11) | (gr << 5) | b
+}
+
+var (
+	spkEn       machine.Pin
+	speakerInit bool
+)
+
+func initSpeaker() {
+	if speakerInit {
+		return
+	}
+	spkEn = machine.Pin(tdeck.SpeakerPin)
+	spkEn.Configure(machine.PinConfig{Mode: machine.PinOutput})
+	spkEn.Low()
+	err := machine.I2S0.Configure(machine.I2SConfig{
+		SCK:            machine.Pin(tdeck.I2SBCK),
+		WS:             machine.Pin(tdeck.I2SWS),
+		SDO:            machine.Pin(tdeck.I2SDOUT),
+		SDI:            machine.NoPin,
+		Mode:           machine.I2SModeSource,
+		Standard:       machine.I2StandardPhilips,
+		ClockSource:    machine.I2SClockSourceInternal,
+		DataFormat:     machine.I2SDataFormat16bit,
+		AudioFrequency: speakerSampleRate,
+		Stereo:         false,
+	})
+	if err != nil {
+		return
+	}
+	machine.I2S0.Enable(true)
+	speakerInit = true
+}
+
+func playBeep() {
+	if !speakerInit {
+		return
+	}
+	samples := makeBeepSamples(beepHz, beepDur)
+	mono := make([]uint16, len(samples)/2)
+	for i := range mono {
+		mono[i] = uint16(samples[i*2])
+	}
+	spkEn.High()
+	time.Sleep(10 * time.Millisecond)
+	_, _ = machine.I2S0.WriteMono(mono)
+	spkEn.Low()
+}
+
+func makeBeepSamples(hz int, dur time.Duration) []int16 {
+	n := int(speakerSampleRate * dur.Milliseconds() / 1000)
+	s := make([]int16, n*2)
+	period := speakerSampleRate / hz
+	if period < 2 {
+		period = 2
+	}
+	amp := int16(0x7FFF)
+	for i := 0; i < n; i++ {
+		var v int16
+		if (i % period) < period/2 {
+			v = amp
+		} else {
+			v = -amp
+		}
+		s[i*2] = v
+		s[i*2+1] = v
+	}
+	return s
 }
 
 func (g *game) reset() {
@@ -267,6 +340,7 @@ func (g *game) tick() {
 	g.snake = append([]vec2{head}, g.snake...)
 	if head.x == g.food.x && head.y == g.food.y {
 		g.score++
+		playBeep()
 		oldFood := g.food
 		g.placeFood()
 		addDirty(vec2{head.x, head.y})

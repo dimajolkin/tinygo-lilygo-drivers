@@ -1,5 +1,5 @@
-// Package tdeck реализует драйвер клавиатуры LilyGo T-Deck (I2C).
-// Чтение кодов символов клавиш, управление подсветкой и питанием.
+// Package tdeck — драйверы для LilyGo T-Deck (ESP32-S3): клавиатура I2C, трекбол, пины платы.
+// Документация: https://github.com/Xinyuan-LilyGO/T-Deck
 package tdeck
 
 import (

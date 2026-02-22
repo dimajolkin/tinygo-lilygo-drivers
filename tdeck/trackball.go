@@ -18,15 +18,6 @@ package tdeck
 
 import "machine"
 
-// Trackball pins per LilyGo T-Deck (utilities.h: BOARD_TBOX_G01..G04, issue #71)
-const (
-	PinLeft  = 1  // G04
-	PinUp    = 3  // G01
-	PinRight = 2  // G02
-	PinDown  = 15 // G03
-	PinOK    = 0  // BOARD_BOOT_PIN
-)
-
 type TrackballState struct {
 	Left  bool
 	Up    bool

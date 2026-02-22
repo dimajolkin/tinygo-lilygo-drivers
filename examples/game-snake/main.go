@@ -55,18 +55,20 @@ var (
 type vec2 struct{ x, y int }
 
 type game struct {
-	snake        []vec2
-	dir          vec2
-	next         vec2
-	food         vec2
-	score        int
-	lastScore    int
-	over         bool
-	display      *st7789.Device
-	needFullDraw bool
-	dirty        [8]vec2
-	ndirty       int
-	cellBuf      [cellPixels]uint8
+	snake          []vec2
+	dir            vec2
+	next           vec2
+	food           vec2
+	score          int
+	lastScore      int
+	lastBrightness int
+	brightness     uint8
+	over           bool
+	display        *st7789.Device
+	needFullDraw   bool
+	dirty          [8]vec2
+	ndirty         int
+	cellBuf        [cellPixels]uint8
 }
 
 func main() {
@@ -86,7 +88,12 @@ func main() {
 		Height:   320,
 		Rotation: drivers.Rotation90,
 	})
-	display.EnableBacklight(true)
+
+	blPWM := machine.PWM0
+	blPWM.Configure(machine.PWMConfig{Period: uint64(time.Second / 5000)})
+	display.ConfigureBacklightPWM(blPWM)
+
+	display.SetBacklightBrightness(100)
 
 	err := machine.I2C0.Configure(machine.I2CConfig{SCL: boardI2CSCL, SDA: boardI2CSDA})
 	if err != nil {
@@ -99,15 +106,31 @@ func main() {
 	time.Sleep(100 * time.Millisecond)
 	_ = kb.SetBrightness(127)
 
-	g := &game{display: &display}
+	g := &game{display: &display, brightness: 128, lastBrightness: -1}
 	g.reset()
 
 	for {
 		code, _ := kb.ReadKey()
 		if code != 0 {
-			if g.over && (code == ' ' || code == 'r' || code == 'R') {
+			if g.over && (code == '+' || code == '-') {
+				step := uint8(25)
+				if code == '+' && g.brightness < 255 {
+					if 255-g.brightness < step {
+						g.brightness = 255
+					} else {
+						g.brightness += step
+					}
+				} else if code == '-' && g.brightness > 0 {
+					if g.brightness < step {
+						g.brightness = 0
+					} else {
+						g.brightness -= step
+					}
+				}
+				display.SetBacklightBrightness(g.brightness)
+			} else if g.over && (code == ' ' || code == 'r' || code == 'R') {
 				g.reset()
-			} else {
+			} else if !g.over {
 				g.input(byte(code))
 			}
 		}
@@ -226,11 +249,13 @@ func (g *game) draw() {
 		g.drawFull()
 		g.needFullDraw = false
 		g.lastScore = g.score
+		g.lastBrightness = int(g.brightness)
 		return
 	}
-	if g.score != g.lastScore {
+	if g.score != g.lastScore || int(g.brightness) != g.lastBrightness {
 		g.drawPanel()
 		g.lastScore = g.score
+		g.lastBrightness = int(g.brightness)
 	}
 	for i := 0; i < g.ndirty; i++ {
 		c := g.dirty[i]
@@ -242,12 +267,14 @@ func (g *game) drawPanel() {
 	g.display.FillRectangle(0, 0, screenW, panelHeight, panelBg)
 	g.display.FillRectangle(0, panelHeight-1, screenW, 1, nokiaGrid)
 	drawScore(g.display, g.score)
+	drawBrightness(g.display, g.brightness)
 }
 
 func (g *game) drawFull() {
 	g.display.FillRectangle(0, 0, screenW, panelHeight, panelBg)
 	g.display.FillRectangle(0, panelHeight-1, screenW, 1, nokiaGrid)
 	drawScore(g.display, g.score)
+	drawBrightness(g.display, g.brightness)
 	g.display.FillRectangle(0, fieldY, screenW, fieldH, nokiaBg)
 	for row := int16(0); row <= gridRows; row++ {
 		g.display.FillRectangle(0, fieldY+row*cellSz, screenW, 1, nokiaGrid)
@@ -286,6 +313,18 @@ const digitW, digitH = 4, 6
 
 func drawScore(d *st7789.Device, score int) {
 	drawNumberAt(d, 4, 5, score, scoreColor)
+}
+
+func drawBrightness(d *st7789.Device, b uint8) {
+	pct := int(b) * 100 / 255
+	digits := 1
+	if pct >= 100 {
+		digits = 3
+	} else if pct >= 10 {
+		digits = 2
+	}
+	x := screenW - int16((digitW+1)*digits) - 2
+	drawNumberAt(d, x, 5, pct, scoreColor)
 }
 
 func drawNumberAt(d *st7789.Device, x, y int16, n int, c color.RGBA) {

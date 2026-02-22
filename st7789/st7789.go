@@ -39,11 +39,16 @@ var (
 	errOutOfBounds = errors.New("rectangle coordinates outside display area")
 )
 
-// BacklightPWM is the interface for PWM control of the backlight (e.g. T-Deck GPIO42).
-// Use machine.PWM0 (or the PWM tied to the backlight pin) after Configure with the desired period.
-type BacklightPWM interface {
+// BacklightPWMSetter is the minimal PWM interface for brightness (Set + Top).
+// Use this with ConfigureBacklightPWMChannel when the PWM has no Channel(pin) method (e.g. ESP32 LEDCPWM).
+type BacklightPWMSetter interface {
 	Set(channel uint8, value uint32)
 	Top() uint32
+}
+
+// BacklightPWM extends BacklightPWMSetter with Channel(pin) for boards where PWM.Channel(pin) is available.
+type BacklightPWM interface {
+	BacklightPWMSetter
 	Channel(pin machine.Pin) (uint8, error)
 }
 
@@ -58,7 +63,7 @@ type DeviceOf[T Color] struct {
 	resetPin        machine.Pin
 	csPin           machine.Pin
 	blPin           machine.Pin
-	blPWM           BacklightPWM
+	blPWM           BacklightPWMSetter
 	blChannel       uint8
 	width           int16
 	height          int16
@@ -536,9 +541,8 @@ func (d *DeviceOf[T]) Size() (w, h int16) {
 	return d.height, d.width
 }
 
-// ConfigureBacklightPWM enables brightness control via PWM (e.g. T-Deck BOARD_TFT_BACKLIGHT / GPIO42).
-// Configure the PWM (e.g. machine.PWM0.Configure(machine.PWMConfig{...})) before calling this.
-// After this, SetBacklightBrightness sets the duty cycle; EnableBacklight still turns the backlight on/off.
+// ConfigureBacklightPWM enables brightness control via PWM when the driver has Channel(pin) (e.g. standard machine.PWM).
+// Configure the PWM before calling this. After this, SetBacklightBrightness sets the duty cycle.
 func (d *DeviceOf[T]) ConfigureBacklightPWM(pwm BacklightPWM) error {
 	ch, err := pwm.Channel(d.blPin)
 	if err != nil {
@@ -548,6 +552,14 @@ func (d *DeviceOf[T]) ConfigureBacklightPWM(pwm BacklightPWM) error {
 	d.blChannel = ch
 	d.SetBacklightBrightness(255)
 	return nil
+}
+
+// ConfigureBacklightPWMChannel enables brightness control when the PWM has no Channel(pin) (e.g. ESP32-S3 machine.LEDCPWM).
+// Configure the PWM and bind the backlight pin to the given channel before calling this.
+func (d *DeviceOf[T]) ConfigureBacklightPWMChannel(pwm BacklightPWMSetter, channel uint8) {
+	d.blPWM = pwm
+	d.blChannel = channel
+	d.SetBacklightBrightness(255)
 }
 
 // SetBacklightBrightness sets backlight level. 0 = off, 1–255 = brightness.

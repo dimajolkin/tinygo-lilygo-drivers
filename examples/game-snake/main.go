@@ -106,6 +106,8 @@ func main() {
 	time.Sleep(100 * time.Millisecond)
 	_ = kb.SetBrightness(127)
 
+	tb := tdeck.NewTrackballDefault()
+
 	g := &game{display: &display, brightness: 128, lastBrightness: -1}
 	g.reset()
 
@@ -132,6 +134,16 @@ func main() {
 				g.reset()
 			} else if !g.over {
 				g.input(byte(code))
+			}
+		}
+
+		dx, dy := tb.ReadMotion()
+		if dx != 0 || dy != 0 {
+			g.inputTrackball(dx, dy)
+		}
+		if g.over {
+			if s := tb.Read(); s.OK {
+				g.reset()
 			}
 		}
 
@@ -182,6 +194,29 @@ func (g *game) input(key byte) {
 	case 'd', 'D':
 		if g.dir.x == 0 {
 			g.next = vec2{1, 0}
+		}
+	}
+}
+
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+
+func (g *game) inputTrackball(dx, dy int) {
+	if abs(dx) >= abs(dy) {
+		if dx > 0 && g.dir.x == 0 {
+			g.next = vec2{1, 0}
+		} else if dx < 0 && g.dir.x == 0 {
+			g.next = vec2{-1, 0}
+		}
+	} else {
+		if dy > 0 && g.dir.y == 0 {
+			g.next = vec2{0, 1}
+		} else if dy < 0 && g.dir.y == 0 {
+			g.next = vec2{0, -1}
 		}
 	}
 }

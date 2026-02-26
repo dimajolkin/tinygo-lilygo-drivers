@@ -18,4 +18,6 @@ const (
 	ES7210_DIN  = 14 // BOARD_ES7210_DIN
 	ES7210_LRCK = 21 // BOARD_ES7210_LRCK
 	ES7210_MCLK = 48 // BOARD_ES7210_MCLK
+
+	BatteryADCPin = 4 // ADC для напряжения батареи (через делитель)
 )

@@ -112,7 +112,7 @@ func main() {
 
 	tb := tdeck.NewTrackballDefault()
 
-	initSpeaker()
+	//initSpeaker()
 
 	g := &game{display: &display, brightness: 128, lastBrightness: -1}
 	g.reset()
@@ -177,46 +177,46 @@ var (
 	speakerInit bool
 )
 
-func initSpeaker() {
-	if speakerInit {
-		return
-	}
-	spkEn = machine.Pin(tdeck.SpeakerPin)
-	spkEn.Configure(machine.PinConfig{Mode: machine.PinOutput})
-	spkEn.Low()
-	err := machine.I2S0.Configure(machine.I2SConfig{
-		SCK:            machine.Pin(tdeck.I2SBCK),
-		WS:             machine.Pin(tdeck.I2SWS),
-		SDO:            machine.Pin(tdeck.I2SDOUT),
-		SDI:            machine.NoPin,
-		Mode:           machine.I2SModeSource,
-		Standard:       machine.I2StandardPhilips,
-		ClockSource:    machine.I2SClockSourceInternal,
-		DataFormat:     machine.I2SDataFormat16bit,
-		AudioFrequency: speakerSampleRate,
-		Stereo:         false,
-	})
-	if err != nil {
-		return
-	}
-	machine.I2S0.Enable(true)
-	speakerInit = true
-}
+//func initSpeaker() {
+//	if speakerInit {
+//		return
+//	}
+//	spkEn = machine.Pin(tdeck.SpeakerPin)
+//	spkEn.Configure(machine.PinConfig{Mode: machine.PinOutput})
+//	spkEn.Low()
+//	err := machine.I2S0.Configure(machine.I2SConfig{
+//		SCK:            machine.Pin(tdeck.I2SBCK),
+//		WS:             machine.Pin(tdeck.I2SWS),
+//		SDO:            machine.Pin(tdeck.I2SDOUT),
+//		SDI:            machine.NoPin,
+//		Mode:           machine.I2SModeSource,
+//		Standard:       machine.I2StandardPhilips,
+//		ClockSource:    machine.I2SClockSourceInternal,
+//		DataFormat:     machine.I2SDataFormat16bit,
+//		AudioFrequency: speakerSampleRate,
+//		Stereo:         false,
+//	})
+//	if err != nil {
+//		return
+//	}
+//	machine.I2S0.Enable(true)
+//	speakerInit = true
+//}
 
-func playBeep() {
-	if !speakerInit {
-		return
-	}
-	samples := makeBeepSamples(beepHz, beepDur)
-	mono := make([]uint16, len(samples)/2)
-	for i := range mono {
-		mono[i] = uint16(samples[i*2])
-	}
-	spkEn.High()
-	time.Sleep(10 * time.Millisecond)
-	_, _ = machine.I2S0.WriteMono(mono)
-	spkEn.Low()
-}
+//func playBeep() {
+//	if !speakerInit {
+//		return
+//	}
+//	samples := makeBeepSamples(beepHz, beepDur)
+//	mono := make([]uint16, len(samples)/2)
+//	for i := range mono {
+//		mono[i] = uint16(samples[i*2])
+//	}
+//	spkEn.High()
+//	time.Sleep(10 * time.Millisecond)
+//	_, _ = machine.I2S0.WriteMono(mono)
+//	spkEn.Low()
+//}
 
 func makeBeepSamples(hz int, dur time.Duration) []int16 {
 	n := int(speakerSampleRate * dur.Milliseconds() / 1000)
@@ -340,7 +340,7 @@ func (g *game) tick() {
 	g.snake = append([]vec2{head}, g.snake...)
 	if head.x == g.food.x && head.y == g.food.y {
 		g.score++
-		playBeep()
+		//playBeep()
 		oldFood := g.food
 		g.placeFood()
 		addDirty(vec2{head.x, head.y})

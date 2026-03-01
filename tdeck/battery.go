@@ -7,9 +7,10 @@ import (
 )
 
 const (
-	adcBits  = 16
-	adcMax   = (1 << adcBits) - 1
-	adcRefMV = 3300
+	adcBits   = 16
+	adcMax    = (1 << adcBits) - 1
+	adcRefMV  = 3300
+	smoothAlpha = 0.12
 )
 
 type BatteryConfig struct {
@@ -40,6 +41,7 @@ type Battery struct {
 	cfg        BatteryConfig
 	lastVMV    int32
 	lastAt     time.Time
+	smoothedVMV float64
 }
 
 func NewBattery(pin machine.Pin, cfg BatteryConfig) *Battery {
@@ -58,15 +60,23 @@ func (b *Battery) Configure() {
 func (b *Battery) Read() BatteryReading {
 	var r BatteryReading
 	raw := b.adc.Get()
-	r.VoltageMV = int32(uint32(raw)*uint32(adcRefMV)*uint32(b.cfg.Divider)) / int32(adcMax)
-	if r.VoltageMV < b.cfg.EmptyMV {
-		r.VoltageMV = b.cfg.EmptyMV
+	rawVMV := int32(uint32(raw)*uint32(adcRefMV)*uint32(b.cfg.Divider)) / int32(adcMax)
+	if rawVMV < b.cfg.EmptyMV {
+		rawVMV = b.cfg.EmptyMV
 	}
-	if r.VoltageMV > b.cfg.ChargedMV {
-		r.VoltageMV = b.cfg.ChargedMV
+	if rawVMV > b.cfg.ChargedMV {
+		rawVMV = b.cfg.ChargedMV
 	}
 
-	r.Charging = r.VoltageMV > b.cfg.FullMV+50
+	v := float64(rawVMV)
+	if b.smoothedVMV == 0 {
+		b.smoothedVMV = v
+	} else {
+		b.smoothedVMV = smoothAlpha*v + (1-smoothAlpha)*b.smoothedVMV
+	}
+	r.VoltageMV = int32(b.smoothedVMV)
+
+	r.Charging = rawVMV > b.cfg.FullMV+50
 
 	if r.Charging {
 		r.Pct = int((r.VoltageMV - b.cfg.FullMV) * 100 / (b.cfg.ChargedMV - b.cfg.FullMV))
@@ -82,12 +92,12 @@ func (b *Battery) Read() BatteryReading {
 
 	if r.Charging {
 		now := time.Now()
-		if b.lastVMV >= 0 && r.VoltageMV > b.lastVMV {
+		if b.lastVMV >= 0 && rawVMV > b.lastVMV {
 			elapsed := now.Sub(b.lastAt).Seconds()
 			if elapsed >= 4 {
-				rateMVps := float64(r.VoltageMV-b.lastVMV) / elapsed
+				rateMVps := float64(rawVMV-b.lastVMV) / elapsed
 				if rateMVps > 2 {
-					remaining := int32(b.cfg.ChargedMV - r.VoltageMV)
+					remaining := int32(b.cfg.ChargedMV - rawVMV)
 					if remaining > 0 {
 						secLeft := float64(remaining) / rateMVps
 						r.TimeLeft = formatBatteryTimeLeft(int64(secLeft))
@@ -95,7 +105,7 @@ func (b *Battery) Read() BatteryReading {
 				}
 			}
 		}
-		b.lastVMV = r.VoltageMV
+		b.lastVMV = rawVMV
 		b.lastAt = now
 	} else {
 		b.lastVMV = -1

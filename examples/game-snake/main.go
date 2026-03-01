@@ -20,6 +20,15 @@ const (
 
 	boardI2CSCL = machine.GPIO8
 	boardI2CSDA = machine.GPIO18
+	boardPower  = machine.GPIO10
+
+	batterySegments = 4
+	batterySegW     = 4
+	batterySegGap   = 1
+	batteryH        = 10
+	batteryTipW     = 2
+	batteryBorder   = 1
+	batteryTotalW   = batteryBorder*2 + batterySegments*batterySegW + (batterySegments-1)*batterySegGap + batteryTipW
 
 	screenW     = 320
 	screenH     = 240
@@ -37,13 +46,19 @@ const (
 )
 
 var (
-	nokiaBg    = color.RGBA{0x0d, 0x37, 0x0d, 255}
-	nokiaSnake = color.RGBA{0x33, 0x99, 0x33, 255}
-	nokiaHead  = color.RGBA{0x55, 0xbb, 0x55, 255}
-	nokiaFood  = color.RGBA{0xcc, 0x22, 0x22, 255}
-	nokiaGrid  = color.RGBA{0x1a, 0x4a, 0x1a, 255}
-	panelBg    = color.RGBA{0x08, 0x28, 0x08, 255}
-	scoreColor = color.RGBA{0xaa, 0xcc, 0xaa, 255}
+	nokiaBg        = color.RGBA{0x0d, 0x37, 0x0d, 255}
+	nokiaSnake     = color.RGBA{0x33, 0x99, 0x33, 255}
+	nokiaHead      = color.RGBA{0x55, 0xbb, 0x55, 255}
+	nokiaFood      = color.RGBA{0xcc, 0x22, 0x22, 255}
+	nokiaGrid      = color.RGBA{0x1a, 0x4a, 0x1a, 255}
+	panelBg        = color.RGBA{0x08, 0x28, 0x08, 255}
+	scoreColor     = color.RGBA{0xaa, 0xcc, 0xaa, 255}
+	batteryFg      = color.RGBA{0x55, 0xaa, 0x55, 255}
+	batteryEmpty   = color.RGBA{0x1a, 0x3a, 0x1a, 255}
+	batteryCharge  = color.RGBA{0xcc, 0xaa, 0x22, 255}
+	batteryFrame   = color.RGBA{0x44, 0x66, 0x44, 255}
+	pauseOverlay   = color.RGBA{0x08, 0x18, 0x08, 255}
+	pauseTextColor = color.RGBA{0x88, 0xcc, 0x88, 255}
 )
 
 const cellPixels = cellSz * cellSz * 2
@@ -59,24 +74,33 @@ var (
 type vec2 struct{ x, y int }
 
 type game struct {
-	snake          []vec2
-	dir            vec2
-	next           vec2
-	food           vec2
-	score          int
-	lastScore      int
-	lastBrightness int
-	brightness     uint8
-	over           bool
-	display        *st7789.Device
-	needFullDraw   bool
-	dirty          [8]vec2
-	ndirty         int
-	cellBuf        [cellPixels]uint8
+	snake           []vec2
+	dir             vec2
+	next            vec2
+	food            vec2
+	score           int
+	lastScore       int
+	lastBrightness  int
+	lastBatPct      int
+	lastCharging    bool
+	chargeAnimPhase uint8
+	brightness      uint8
+	paused          bool
+	over            bool
+	display         *st7789.Device
+	battery         *tdeck.Battery
+	needFullDraw    bool
+	dirty           [8]vec2
+	ndirty          int
+	cellBuf         [cellPixels]uint8
 }
 
 func main() {
 	time.Sleep(1 * time.Second)
+
+	boardPower.Configure(machine.PinConfig{Mode: machine.PinOutput})
+	boardPower.High()
+	time.Sleep(200 * time.Millisecond)
 
 	spi := machine.SPI1
 	spi.Configure(machine.SPIConfig{
@@ -112,9 +136,10 @@ func main() {
 
 	tb := tdeck.NewTrackballDefault()
 
-	//initSpeaker()
+	bat := tdeck.NewBattery(tdeck.BatteryADCPin, tdeck.DefaultBatteryConfig())
+	bat.Configure()
 
-	g := &game{display: &display, brightness: 128, lastBrightness: -1}
+	g := &game{display: &display, battery: bat, brightness: 128, lastBrightness: -1, lastBatPct: -1}
 	g.reset()
 
 	for {
@@ -138,6 +163,14 @@ func main() {
 				display.SetBacklightBrightness(g.brightness)
 			} else if g.over && (code == ' ' || code == 'r' || code == 'R') {
 				g.reset()
+			} else if !g.over && code == ' ' {
+				g.paused = !g.paused
+				if g.paused {
+					display.SetBacklightBrightness(40)
+				} else {
+					display.SetBacklightBrightness(g.brightness)
+					g.needFullDraw = true
+				}
 			} else if !g.over {
 				g.input(byte(code))
 			}
@@ -153,9 +186,9 @@ func main() {
 			}
 		}
 
-		if !g.over {
+		if !g.over && !g.paused {
 			g.tick()
-		} else {
+		} else if g.over {
 			time.Sleep(50 * time.Millisecond)
 			continue
 		}
@@ -316,11 +349,9 @@ func (g *game) tick() {
 	head := g.snake[0]
 	head.x += g.dir.x
 	head.y += g.dir.y
+	head.x = (head.x + gridCols) % gridCols
+	head.y = (head.y + gridRows) % gridRows
 
-	if head.x < 0 || head.x >= gridCols || head.y < 0 || head.y >= gridRows {
-		g.over = true
-		return
-	}
 	for _, s := range g.snake {
 		if s.x == head.x && s.y == head.y {
 			g.over = true
@@ -354,6 +385,12 @@ func (g *game) tick() {
 }
 
 func (g *game) draw() {
+	g.chargeAnimPhase++
+	if g.paused {
+		g.display.FillRectangle(0, 0, int16(screenW), int16(screenH), pauseOverlay)
+		g.display.DrawString(130, 110, "Pause", pauseTextColor, 3)
+		return
+	}
 	if g.needFullDraw {
 		g.drawFull()
 		g.needFullDraw = false
@@ -361,10 +398,14 @@ func (g *game) draw() {
 		g.lastBrightness = int(g.brightness)
 		return
 	}
-	if g.score != g.lastScore || int(g.brightness) != g.lastBrightness {
+	r := g.battery.Read()
+	panelChanged := g.score != g.lastScore || int(g.brightness) != g.lastBrightness || r.Pct != g.lastBatPct || r.Charging != g.lastCharging
+	if panelChanged || r.Charging {
 		g.drawPanel()
 		g.lastScore = g.score
 		g.lastBrightness = int(g.brightness)
+		g.lastBatPct = r.Pct
+		g.lastCharging = r.Charging
 	}
 	for i := 0; i < g.ndirty; i++ {
 		c := g.dirty[i]
@@ -376,6 +417,8 @@ func (g *game) drawPanel() {
 	g.display.FillRectangle(0, 0, screenW, panelHeight, panelBg)
 	g.display.FillRectangle(0, panelHeight-1, screenW, 1, nokiaGrid)
 	drawScore(g.display, g.score)
+	r := g.battery.Read()
+	drawBatteryIndicator(g.display, screenW-batteryTotalW-2, (panelHeight-batteryH)/2, r.Pct, r.Charging, g.chargeAnimPhase)
 	drawBrightness(g.display, g.brightness)
 }
 
@@ -383,6 +426,10 @@ func (g *game) drawFull() {
 	g.display.FillRectangle(0, 0, screenW, panelHeight, panelBg)
 	g.display.FillRectangle(0, panelHeight-1, screenW, 1, nokiaGrid)
 	drawScore(g.display, g.score)
+	r := g.battery.Read()
+	drawBatteryIndicator(g.display, screenW-batteryTotalW-2, (panelHeight-batteryH)/2, r.Pct, r.Charging, g.chargeAnimPhase)
+	g.lastBatPct = r.Pct
+	g.lastCharging = r.Charging
 	drawBrightness(g.display, g.brightness)
 	g.display.FillRectangle(0, fieldY, screenW, fieldH, nokiaBg)
 	for row := int16(0); row <= gridRows; row++ {
@@ -432,8 +479,43 @@ func drawBrightness(d *st7789.Device, b uint8) {
 	} else if pct >= 10 {
 		digits = 2
 	}
-	x := screenW - int16((digitW+1)*digits) - 2
+	rightMargin := batteryTotalW + 4
+	x := int16(screenW - rightMargin - (digitW+1)*digits)
 	drawNumberAt(d, x, 5, pct, scoreColor)
+}
+
+func drawBatteryIndicator(d *st7789.Device, x, y int16, pct int, charging bool, animPhase uint8) {
+	bodyW := int16(batteryBorder*2 + batterySegments*batterySegW + (batterySegments-1)*batterySegGap)
+	bodyH := int16(batteryH)
+	d.FillRectangle(x, y, bodyW, bodyH, batteryFrame)
+	innerY := y + int16(batteryBorder)
+	innerH := bodyH - int16(batteryBorder*2)
+	filled := (pct*batterySegments + 49) / 100
+	if filled > batterySegments {
+		filled = batterySegments
+	}
+	fg := batteryFg
+	if charging {
+		fg = batteryCharge
+	}
+	segX := x + batteryBorder
+	for i := 0; i < batterySegments; i++ {
+		var segColor color.RGBA
+		if i < filled {
+			segColor = fg
+		} else if charging && i == filled && filled < batterySegments {
+			if (animPhase/3)%2 == 0 {
+				segColor = batteryCharge
+			} else {
+				segColor = batteryEmpty
+			}
+		} else {
+			segColor = batteryEmpty
+		}
+		d.FillRectangle(segX, innerY, int16(batterySegW), innerH, segColor)
+		segX += int16(batterySegW + batterySegGap)
+	}
+	d.FillRectangle(x+bodyW, y+int16(batteryBorder), int16(batteryTipW), bodyH-int16(batteryBorder*2), batteryFrame)
 }
 
 func drawNumberAt(d *st7789.Device, x, y int16, n int, c color.RGBA) {

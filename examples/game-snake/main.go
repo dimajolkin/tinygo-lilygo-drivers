@@ -81,10 +81,12 @@ type game struct {
 	score           int
 	lastScore       int
 	lastBrightness  int
+	lastSoundOn     bool
 	lastBatPct      int
 	lastCharging    bool
 	chargeAnimPhase uint8
 	brightness      uint8
+	soundOn         bool
 	paused          bool
 	over            bool
 	display         *st7789.Device
@@ -139,13 +141,26 @@ func main() {
 	bat := tdeck.NewBattery(tdeck.BatteryADCPin, tdeck.DefaultBatteryConfig())
 	bat.Configure()
 
-	g := &game{display: &display, battery: bat, brightness: 128, lastBrightness: -1, lastBatPct: -1}
+	initSpeaker()
+
+	g := &game{
+		display:        &display,
+		battery:        bat,
+		brightness:     128,
+		lastBrightness: -1,
+		lastBatPct:     -1,
+		soundOn:        true,
+		lastSoundOn:    true,
+	}
 	g.reset()
 
 	for {
 		code, _ := kb.ReadKey()
 		if code != 0 {
-			if g.over && (code == '+' || code == '-') {
+			if code == 4 {
+				g.soundOn = !g.soundOn
+				g.needFullDraw = true
+			} else if g.over && (code == '+' || code == '-') {
 				step := uint8(25)
 				if code == '+' && g.brightness < 255 {
 					if 255-g.brightness < step {
@@ -210,46 +225,46 @@ var (
 	speakerInit bool
 )
 
-//func initSpeaker() {
-//	if speakerInit {
-//		return
-//	}
-//	spkEn = machine.Pin(tdeck.SpeakerPin)
-//	spkEn.Configure(machine.PinConfig{Mode: machine.PinOutput})
-//	spkEn.Low()
-//	err := machine.I2S0.Configure(machine.I2SConfig{
-//		SCK:            machine.Pin(tdeck.I2SBCK),
-//		WS:             machine.Pin(tdeck.I2SWS),
-//		SDO:            machine.Pin(tdeck.I2SDOUT),
-//		SDI:            machine.NoPin,
-//		Mode:           machine.I2SModeSource,
-//		Standard:       machine.I2StandardPhilips,
-//		ClockSource:    machine.I2SClockSourceInternal,
-//		DataFormat:     machine.I2SDataFormat16bit,
-//		AudioFrequency: speakerSampleRate,
-//		Stereo:         false,
-//	})
-//	if err != nil {
-//		return
-//	}
-//	machine.I2S0.Enable(true)
-//	speakerInit = true
-//}
+func initSpeaker() {
+	if speakerInit {
+		return
+	}
+	spkEn = machine.Pin(tdeck.SpeakerPin)
+	spkEn.Configure(machine.PinConfig{Mode: machine.PinOutput})
+	spkEn.Low()
+	err := machine.I2S0.Configure(machine.I2SConfig{
+		SCK:            machine.Pin(tdeck.I2SBCK),
+		WS:             machine.Pin(tdeck.I2SWS),
+		SDO:            machine.Pin(tdeck.I2SDOUT),
+		SDI:            machine.NoPin,
+		Mode:           machine.I2SModeSource,
+		Standard:       machine.I2StandardPhilips,
+		ClockSource:    machine.I2SClockSourceInternal,
+		DataFormat:     machine.I2SDataFormat16bit,
+		AudioFrequency: speakerSampleRate,
+		Stereo:         false,
+	})
+	if err != nil {
+		return
+	}
+	machine.I2S0.Enable(true)
+	speakerInit = true
+}
 
-//func playBeep() {
-//	if !speakerInit {
-//		return
-//	}
-//	samples := makeBeepSamples(beepHz, beepDur)
-//	mono := make([]uint16, len(samples)/2)
-//	for i := range mono {
-//		mono[i] = uint16(samples[i*2])
-//	}
-//	spkEn.High()
-//	time.Sleep(10 * time.Millisecond)
-//	_, _ = machine.I2S0.WriteMono(mono)
-//	spkEn.Low()
-//}
+func playBeep(enabled bool) {
+	if !speakerInit || !enabled {
+		return
+	}
+	samples := makeBeepSamples(beepHz, beepDur)
+	mono := make([]uint16, len(samples)/2)
+	for i := range mono {
+		mono[i] = uint16(samples[i*2])
+	}
+	spkEn.High()
+	time.Sleep(10 * time.Millisecond)
+	_, _ = machine.I2S0.WriteMono(mono)
+	spkEn.Low()
+}
 
 func makeBeepSamples(hz int, dur time.Duration) []int16 {
 	n := int(speakerSampleRate * dur.Milliseconds() / 1000)
@@ -371,7 +386,7 @@ func (g *game) tick() {
 	g.snake = append([]vec2{head}, g.snake...)
 	if head.x == g.food.x && head.y == g.food.y {
 		g.score++
-		//playBeep()
+		playBeep(g.soundOn)
 		oldFood := g.food
 		g.placeFood()
 		addDirty(vec2{head.x, head.y})
@@ -396,16 +411,22 @@ func (g *game) draw() {
 		g.needFullDraw = false
 		g.lastScore = g.score
 		g.lastBrightness = int(g.brightness)
+		g.lastSoundOn = g.soundOn
 		return
 	}
 	r := g.battery.Read()
-	panelChanged := g.score != g.lastScore || int(g.brightness) != g.lastBrightness || r.Pct != g.lastBatPct || r.Charging != g.lastCharging
+	panelChanged := g.score != g.lastScore ||
+		int(g.brightness) != g.lastBrightness ||
+		r.Pct != g.lastBatPct ||
+		r.Charging != g.lastCharging ||
+		g.soundOn != g.lastSoundOn
 	if panelChanged || r.Charging {
 		g.drawPanel()
 		g.lastScore = g.score
 		g.lastBrightness = int(g.brightness)
 		g.lastBatPct = r.Pct
 		g.lastCharging = r.Charging
+		g.lastSoundOn = g.soundOn
 	}
 	for i := 0; i < g.ndirty; i++ {
 		c := g.dirty[i]
@@ -419,7 +440,7 @@ func (g *game) drawPanel() {
 	drawScore(g.display, g.score)
 	r := g.battery.Read()
 	drawBatteryIndicator(g.display, screenW-batteryTotalW-2, (panelHeight-batteryH)/2, r.Pct, r.Charging, g.chargeAnimPhase)
-	drawBrightness(g.display, g.brightness)
+	drawSoundAndBrightness(g.display, g.brightness, g.soundOn)
 }
 
 func (g *game) drawFull() {
@@ -430,7 +451,7 @@ func (g *game) drawFull() {
 	drawBatteryIndicator(g.display, screenW-batteryTotalW-2, (panelHeight-batteryH)/2, r.Pct, r.Charging, g.chargeAnimPhase)
 	g.lastBatPct = r.Pct
 	g.lastCharging = r.Charging
-	drawBrightness(g.display, g.brightness)
+	drawSoundAndBrightness(g.display, g.brightness, g.soundOn)
 	g.display.FillRectangle(0, fieldY, screenW, fieldH, nokiaBg)
 	for row := int16(0); row <= gridRows; row++ {
 		g.display.FillRectangle(0, fieldY+row*cellSz, screenW, 1, nokiaGrid)
@@ -471,7 +492,7 @@ func drawScore(d *st7789.Device, score int) {
 	drawNumberAt(d, 4, 5, score, scoreColor)
 }
 
-func drawBrightness(d *st7789.Device, b uint8) {
+func drawSoundAndBrightness(d *st7789.Device, b uint8, soundOn bool) {
 	pct := int(b) * 100 / 255
 	digits := 1
 	if pct >= 100 {
@@ -480,8 +501,27 @@ func drawBrightness(d *st7789.Device, b uint8) {
 		digits = 2
 	}
 	rightMargin := batteryTotalW + 4
-	x := int16(screenW - rightMargin - (digitW+1)*digits)
-	drawNumberAt(d, x, 5, pct, scoreColor)
+	iconW := int16(8)
+	totalW := iconW + 1 + int16((digitW+1)*digits)
+	x := int16(screenW - rightMargin - int(totalW))
+	drawSoundIcon(d, x, 4, soundOn)
+	drawNumberAt(d, x+iconW+1, 5, pct, scoreColor)
+}
+
+func drawSoundIcon(d *st7789.Device, x, y int16, soundOn bool) {
+	c := scoreColor
+	// корпус динамика
+	d.FillRectangle(x, y+1, 2, 4, c)
+	d.FillRectangle(x+2, y+2, 1, 2, c)
+	if soundOn {
+		// волны
+		d.FillRectangle(x+4, y+1, 1, 1, c)
+		d.FillRectangle(x+5, y+2, 1, 2, c)
+		d.FillRectangle(x+4, y+4, 1, 1, c)
+	} else {
+		// зачёркнутый значок
+		d.FillRectangle(x+4, y+1, 1, 4, c)
+	}
 }
 
 func drawBatteryIndicator(d *st7789.Device, x, y int16, pct int, charging bool, animPhase uint8) {

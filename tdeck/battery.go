@@ -7,10 +7,20 @@ import (
 )
 
 const (
-	adcBits   = 16
-	adcMax    = (1 << adcBits) - 1
-	adcRefMV  = 3300
-	smoothAlpha = 0.12
+	adcBits         = 16
+	adcMax          = (1 << adcBits) - 1 // на ESP32-S3 в TinyGo сырые значения 0..65535 (наблюдаемо до ~65520)
+	adcRefMV        = 3300
+	smoothAlpha     = 0.12 // при разряде — меньше дрожания
+	smoothAlphaChg  = 0.45 // при зарядке — быстрее виден рост напряжения
+	rawAdcChgEnter  = 62000 // зарядка: сырой АЦП достиг этого значения (близко к макс 65520)
+	rawAdcChgExit   = 55000 // выход из зарядки: сырой АЦП ниже этого (гистерезис)
+)
+
+type SoCMethod int
+
+const (
+	SoCLinear SoCMethod = iota
+	SoCLiIon
 )
 
 type BatteryConfig struct {
@@ -18,6 +28,7 @@ type BatteryConfig struct {
 	FullMV    int32
 	ChargedMV int32
 	Divider   int32
+	SoC       SoCMethod
 }
 
 func DefaultBatteryConfig() BatteryConfig {
@@ -26,22 +37,78 @@ func DefaultBatteryConfig() BatteryConfig {
 		FullMV:    3700,
 		ChargedMV: 4200,
 		Divider:   2,
+		SoC:       SoCLiIon,
 	}
 }
 
+// Типовая разрядная кривая Li-ion (одна ячейка), напряжение мВ -> условный % (0–100 для 3000–4200 мВ).
+var liIonCurve = []struct {
+	mv  int32
+	pct int
+}{
+	{3000, 0}, {3300, 2}, {3400, 5}, {3520, 10}, {3600, 15}, {3640, 20},
+	{3680, 30}, {3720, 40}, {3780, 50}, {3850, 60}, {3920, 70}, {4000, 80},
+	{4080, 90}, {4150, 97}, {4200, 100},
+}
+
+func liIonCurvePct(mv int32) int {
+	if mv <= liIonCurve[0].mv {
+		return 0
+	}
+	if mv >= liIonCurve[len(liIonCurve)-1].mv {
+		return 100
+	}
+	for i := 0; i < len(liIonCurve)-1; i++ {
+		v0, p0 := liIonCurve[i].mv, liIonCurve[i].pct
+		v1, p1 := liIonCurve[i+1].mv, liIonCurve[i+1].pct
+		if mv >= v0 && mv <= v1 {
+			dx := v1 - v0
+			if dx <= 0 {
+				return p0
+			}
+			return p0 + (p1-p0)*int(mv-v0)/int(dx)
+		}
+	}
+	return 0
+}
+
+func voltageToPctLiIon(mv int32, emptyMV, fullMV int32) int {
+	if mv <= emptyMV {
+		return 0
+	}
+	if mv >= fullMV {
+		return 100
+	}
+	emptyPct := liIonCurvePct(emptyMV)
+	fullPct := liIonCurvePct(fullMV)
+	if fullPct <= emptyPct {
+		return int((mv - emptyMV) * 100 / (fullMV - emptyMV))
+	}
+	pct := (liIonCurvePct(mv)-emptyPct)*100 / (fullPct - emptyPct)
+	if pct < 0 {
+		return 0
+	}
+	if pct > 100 {
+		return 100
+	}
+	return pct
+}
+
 type BatteryReading struct {
-	VoltageMV int32
+	VoltageMV int32  // сглаженное напряжение, мВ
+	RawADC    uint32 // сырое значение АЦП (0..65535)
 	Pct       int
 	Charging  bool
 	TimeLeft  string
 }
 
 type Battery struct {
-	adc        machine.ADC
-	cfg        BatteryConfig
-	lastVMV    int32
-	lastAt     time.Time
+	adc         machine.ADC
+	cfg         BatteryConfig
+	lastVMV     int32
+	lastAt      time.Time
 	smoothedVMV float64
+	charging    bool // зарядка только по сырому АЦП: raw >= rawAdcChgEnter
 }
 
 func NewBattery(pin machine.Pin, cfg BatteryConfig) *Battery {
@@ -60,6 +127,7 @@ func (b *Battery) Configure() {
 func (b *Battery) Read() BatteryReading {
 	var r BatteryReading
 	raw := b.adc.Get()
+	r.RawADC = uint32(raw)
 	rawVMV := int32(uint32(raw)*uint32(adcRefMV)*uint32(b.cfg.Divider)) / int32(adcMax)
 	if rawVMV < b.cfg.EmptyMV {
 		rawVMV = b.cfg.EmptyMV
@@ -68,20 +136,38 @@ func (b *Battery) Read() BatteryReading {
 		rawVMV = b.cfg.ChargedMV
 	}
 
+	if r.RawADC >= rawAdcChgEnter {
+		b.charging = true
+	} else if r.RawADC < rawAdcChgExit {
+		b.charging = false
+	}
+	r.Charging = b.charging
+
+	alpha := smoothAlpha
+	if r.Charging {
+		alpha = smoothAlphaChg
+	}
 	v := float64(rawVMV)
 	if b.smoothedVMV == 0 {
 		b.smoothedVMV = v
 	} else {
-		b.smoothedVMV = smoothAlpha*v + (1-smoothAlpha)*b.smoothedVMV
+		b.smoothedVMV = alpha*v + (1-alpha)*b.smoothedVMV
 	}
 	r.VoltageMV = int32(b.smoothedVMV)
 
-	r.Charging = rawVMV > b.cfg.FullMV+50
-
 	if r.Charging {
-		r.Pct = int((r.VoltageMV - b.cfg.FullMV) * 100 / (b.cfg.ChargedMV - b.cfg.FullMV))
+		if rawVMV >= b.cfg.ChargedMV {
+			r.Pct = 100
+		} else {
+			r.Pct = int((rawVMV - b.cfg.FullMV) * 100 / (b.cfg.ChargedMV - b.cfg.FullMV))
+		}
 	} else {
-		r.Pct = int((r.VoltageMV - b.cfg.EmptyMV) * 100 / (b.cfg.FullMV - b.cfg.EmptyMV))
+		switch b.cfg.SoC {
+		case SoCLiIon:
+			r.Pct = voltageToPctLiIon(r.VoltageMV, b.cfg.EmptyMV, b.cfg.FullMV)
+		default:
+			r.Pct = int((r.VoltageMV - b.cfg.EmptyMV) * 100 / (b.cfg.FullMV - b.cfg.EmptyMV))
+		}
 	}
 	if r.Pct < 0 {
 		r.Pct = 0

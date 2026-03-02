@@ -20,4 +20,10 @@ const (
 	ES7210_MCLK = 48 // BOARD_ES7210_MCLK
 
 	BatteryADCPin = 4 // ADC для напряжения батареи (через делитель)
+
+	// SD card (SPI): BOARD_SDCARD_*, BOARD_SPI_* в utilities.h
+	SDCardCS   = 39
+	SDCardSCK  = 40
+	SDCardMOSI = 41
+	SDCardMISO = 38
 )

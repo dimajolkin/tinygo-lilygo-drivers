@@ -31,11 +31,11 @@ const (
 )
 
 var (
-	boardPower   = machine.GPIO10
-	bgColor      = color.RGBA{0x10, 0x10, 0x18, 255}
-	textColor    = color.RGBA{0xe0, 0xe0, 0xe0, 255}
-	barBgColor   = color.RGBA{0x30, 0x30, 0x40, 255}
-	barFgColor   = color.RGBA{0x50, 0xa0, 0xff, 255}
+	boardPower         = machine.GPIO10
+	bgColor            = color.RGBA{0x10, 0x10, 0x18, 255}
+	textColor          = color.RGBA{0xe0, 0xe0, 0xe0, 255}
+	barBgColor         = color.RGBA{0x30, 0x30, 0x40, 255}
+	barFgColor         = color.RGBA{0x50, 0xa0, 0xff, 255}
 	lastPct      int   = -1
 	lastVbatMV   int32 = -1
 	lastCharging bool
@@ -85,44 +85,43 @@ func main() {
 
 	for {
 		r := bat.Read()
+		println("voltage_mv:", r.VoltageMV, "raw_adc:", r.RawADC, "pct:", r.Pct, "charging:", r.Charging)
 
-		changed := lastPct != r.Pct || lastVbatMV != r.VoltageMV || lastCharging != r.Charging || lastTimeLeft != r.TimeLeft
-		if !changed {
-			time.Sleep(2 * time.Second)
-			continue
-		}
-		lastPct = r.Pct
-		lastVbatMV = r.VoltageMV
-		lastCharging = r.Charging
-		lastTimeLeft = r.TimeLeft
+		//changed := lastPct != r.Pct || lastVbatMV != r.VoltageMV || lastCharging != r.Charging || lastTimeLeft != r.TimeLeft
+		if true {
+			lastPct = r.Pct
+			lastVbatMV = r.VoltageMV
+			lastCharging = r.Charging
+			lastTimeLeft = r.TimeLeft
 
-		display.FillScreen(bgColor)
+			display.FillScreen(bgColor)
+			display.DrawString(margin, margin, "Battery "+strconv.Itoa(batteryMAh)+" mAh", textColor, fontScale)
+			if r.Charging {
+				display.DrawString(margin, margin+30, "Charge: "+strconv.Itoa(r.Pct)+"%", textColor, fontScale)
+			} else {
+				display.DrawString(margin, margin+30, strconv.Itoa(r.Pct)+"%", textColor, fontScale)
+			}
+			display.DrawString(margin, margin+60, "Voltage: "+formatVoltage(r.VoltageMV)+" V", textColor, fontScale)
+			display.DrawString(margin, margin+90, "Raw ADC: "+strconv.FormatUint(uint64(r.RawADC), 10), textColor, fontScale)
 
-		display.DrawString(margin, margin, "Battery "+strconv.Itoa(batteryMAh)+" mAh", textColor, fontScale)
-		if r.Charging {
-			display.DrawString(margin, margin+30, "Charge: "+strconv.Itoa(r.Pct)+"%", textColor, fontScale)
-		} else {
-			display.DrawString(margin, margin+30, strconv.Itoa(r.Pct)+"%", textColor, fontScale)
-		}
-		display.DrawString(margin, margin+60, "Voltage: "+formatVoltage(r.VoltageMV)+" V", textColor, fontScale)
+			barX := int16(margin)
+			barY := int16(margin + 120)
+			barW := int16(screenW - 2*margin)
+			barH := int16(24)
+			display.FillRectangle(barX, barY, barW, barH, barBgColor)
+			display.FillRectangle(barX+2, barY+2, int16(r.Pct)*(barW-4)/100, barH-4, barFgColor)
 
-		barX := int16(margin)
-		barY := int16(margin + 90)
-		barW := int16(screenW - 2*margin)
-		barH := int16(24)
-		display.FillRectangle(barX, barY, barW, barH, barBgColor)
-		display.FillRectangle(barX+2, barY+2, int16(r.Pct)*(barW-4)/100, barH-4, barFgColor)
-
-		if r.Charging {
-			display.DrawString(margin, margin+130, "CHARGING", textColor, fontScale)
-			if r.Pct >= 100 {
-				display.DrawString(margin, margin+158, "Full", textColor, fontScale)
-			} else if r.TimeLeft != "" {
-				display.DrawString(margin, margin+158, "~"+r.TimeLeft+" left", textColor, fontScale)
+			if r.Charging {
+				display.DrawString(margin, margin+160, "CHARGING", textColor, fontScale)
+				if r.Pct >= 100 {
+					display.DrawString(margin, margin+188, "Full", textColor, fontScale)
+				} else if r.TimeLeft != "" {
+					display.DrawString(margin, margin+188, "~"+r.TimeLeft+" left", textColor, fontScale)
+				}
 			}
 		}
 
-		time.Sleep(2 * time.Second)
+		time.Sleep(500 * time.Millisecond)
 	}
 }
 
